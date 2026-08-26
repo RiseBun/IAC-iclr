@@ -181,6 +181,9 @@ The public/private split and annotation fields are defined in
 The actor-relative distance, closing-speed, TTC, and coverage-risk protocol is
 specified in [Actor Relative Motion Capability V1
 (Chinese)](docs/RELATIVE_MOTION_CAPABILITY_V1_ZH.md).
+The first independent 40-record, four-chain, 8-frame/4-second reference-set
+build is recorded in that document; it is NAVSIM sensor-backed NuPlan data,
+not a Waymo result.
 
 ## Repository map
 
@@ -196,6 +199,8 @@ specified in [Actor Relative Motion Capability V1
 - `scripts/estimate_actor_relative_motion.py`: candidate-blind actor state posterior
 - `scripts/evaluate_relative_motion_metrics.py`: metric accuracy and coverage-risk report
 - `scripts/compare_flow_backends.py`: paired RAFT/SEA-RAFT decoder comparison
+- `scripts/build_actor_motion_manifest.py`: build independent NuPlan actor-state reference set
+- `scripts/audit_actor_motion_manifest.py`: fail-closed reference-set audit
 - `configs/navsim_continuous_decoder_plane.json`: reported default configuration
 - `configs/causal_chain_v1.example.jsonl`: executable four-chain risk/clear example
 - `tests/`: unit and protocol tests

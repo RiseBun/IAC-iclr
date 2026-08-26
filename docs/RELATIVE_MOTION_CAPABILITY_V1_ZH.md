@@ -156,3 +156,20 @@ PYTHONPATH=src python scripts/evaluate_relative_motion_metrics.py \
 下一实验应固定 78 个 4 秒/8 帧 actor-level 样本，运行：RAFT-Large 基线、加 history state、
 加 8-frame tracker、加 metric depth/SpatialTrackerV2 challenger。不能直接沿用本次 2 秒
 ego 事件结果冒充相对速度验证。
+
+## 7. 首版独立参考集（服务器实测）
+
+2026-08-27 在服务器已有的 NuPlan mini（NAVSIM 传感器目录）上运行
+`scripts/build_actor_motion_manifest.py`，得到 `results/actor_motion_reference_v1_20260827/`：
+
+- 40 条记录，`blocked_lane / cut_in_or_lead_brake / pedestrian_crossing /
+  unprotected_turn_or_merge` 各 10 条；
+- 每条 4 个 history + 8 个 future 前视图，未来时间严格为 `0.5...4.0 s`；
+- 独立真值来自 `lidar_box` 中心和 `ego_pose`，不是 WAM action；
+- 32 条轨迹达到 usable observability，8 条为 uncertain，构建审计无错误；
+- actor 类别包括 vehicle、pedestrian、generic_object、czone_sign。
+
+这是一份能力验证参考集，不是 WAM 生成视频集，也不能直接给出
+Counterfactual Consistency/Foresight-Conditioned Success。服务器当前未发现可直接读取的
+Waymo TFRecord/actor manifest，因此 Waymo 分支仍需单独导出到同一 JSONL 协议后再合并，不能
+把 NuPlan/NAVSIM 结果标成 Waymo 结果。
