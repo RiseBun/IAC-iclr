@@ -1,0 +1,1 @@
+{"sample_id":"example-closing","actor_id":"vehicle-7","time_s":2.0,"predicted_distance_m":14.1,"reference_distance_m":14.0,"predicted_closing_speed_mps":3.1,"reference_closing_speed_mps":3.0,"predicted_ttc_s":4.55,"reference_ttc_s":4.67,"observability":0.9,"abstain":false}

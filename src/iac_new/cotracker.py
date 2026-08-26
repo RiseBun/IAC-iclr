@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
+
+from .relative_motion import ActorPixelTrack
 
 
 @dataclass(frozen=True)
@@ -20,6 +23,50 @@ class PointTrackObservation:
     query_points: np.ndarray  # [N, 2], pixel x/y in the first frame
     source_size: tuple[int, int]
     target_size: tuple[int, int]
+
+
+def actor_pixel_tracks_from_observation(
+    observation: PointTrackObservation,
+    actors: Sequence[Mapping[str, Any]],
+    times_s: np.ndarray,
+) -> list[ActorPixelTrack]:
+    """Select detector-provided actor queries from a CoTracker observation.
+
+    ``query_index`` refers to the actor anchor supplied to ``observe``. The
+    association/detection system owns that mapping; this adapter only carries
+    tracker visibility and confidence into the metric projection layer.
+    """
+    tracks = np.asarray(observation.tracks, dtype=np.float64)
+    visibility = np.asarray(observation.visibility, dtype=np.float64)
+    confidence = np.asarray(observation.confidence, dtype=np.float64)
+    times = np.asarray(times_s, dtype=np.float64)
+    if tracks.ndim != 3 or tracks.shape[2] != 2:
+        raise ValueError("observation.tracks must have shape [T,N,2]")
+    if visibility.shape != tracks.shape[:2] or confidence.shape != tracks.shape[:2]:
+        raise ValueError("observation visibility/confidence shape mismatch")
+    if times.shape != (tracks.shape[0],) or np.any(np.diff(times) <= 0.0):
+        raise ValueError("times_s must be increasing and match tracker frames")
+    output: list[ActorPixelTrack] = []
+    for actor in actors:
+        actor_id = str(actor.get("actor_id") or "")
+        class_label = str(actor.get("class_label") or "unknown")
+        if not actor_id:
+            raise ValueError("each actor needs a non-empty actor_id")
+        try:
+            query_index = int(actor["query_index"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(f"{actor_id}: query_index is required") from error
+        if not 0 <= query_index < tracks.shape[1]:
+            raise ValueError(f"{actor_id}: query_index is outside the observation")
+        output.append(ActorPixelTrack(
+            actor_id=actor_id,
+            class_label=class_label,
+            times_s=times.copy(),
+            pixels_uv=tracks[:, query_index].copy(),
+            visibility=visibility[:, query_index] > 0.5,
+            confidence=confidence[:, query_index].copy(),
+        ))
+    return output
 
 
 def _grid_points(
@@ -48,6 +95,28 @@ def _grid_points(
     if len(points) < 8:
         raise ValueError("road ROI produced fewer than eight CoTracker query points")
     return np.asarray(points, dtype=np.float32)
+
+
+def validate_query_points(
+    query_points: np.ndarray,
+    *,
+    height: int,
+    width: int,
+) -> np.ndarray:
+    """Validate actor anchor queries in the resized image coordinate system."""
+    points = np.asarray(query_points, dtype=np.float32)
+    if points.ndim != 2 or points.shape[1] != 2:
+        raise ValueError("query_points must have shape [N,2]")
+    if len(points) == 0 or not np.isfinite(points).all():
+        raise ValueError("query_points must contain finite points")
+    if (
+        np.any(points[:, 0] < 0.0)
+        or np.any(points[:, 0] >= width)
+        or np.any(points[:, 1] < 0.0)
+        or np.any(points[:, 1] >= height)
+    ):
+        raise ValueError("query_points must lie inside target_size")
+    return points
 
 
 class CoTrackerExtractor:
@@ -112,17 +181,23 @@ class CoTrackerExtractor:
         *,
         target_size: tuple[int, int],
         polygon_normalized: list[list[float]] | None = None,
+        query_points: np.ndarray | None = None,
     ) -> PointTrackObservation:
         if len(frame_paths) < 2:
             raise ValueError("at least two video frames are required")
         frames, source_size = self._read_images(frame_paths, target_size)
         height, width = frames.shape[1:3]
-        query_points = _grid_points(
-            height,
-            width,
-            grid_size=self.grid_size,
-            polygon_normalized=polygon_normalized,
-        )
+        if query_points is None:
+            query_points = _grid_points(
+                height,
+                width,
+                grid_size=self.grid_size,
+                polygon_normalized=polygon_normalized,
+            )
+        else:
+            query_points = validate_query_points(
+                query_points, height=height, width=width
+            )
         torch = self.torch
         video = torch.from_numpy(frames).permute(0, 3, 1, 2).unsqueeze(0).float().to(self.device)
         queries = torch.from_numpy(

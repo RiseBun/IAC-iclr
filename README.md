@@ -35,6 +35,12 @@ and `turn_right`. Metric speed and exact trajectory recovery are not primary
 claims. Optional depth, DINOv2, semantic, CoTracker, and SEA-RAFT modules remain
 research ablations; they are not part of the reported 78-sample default.
 
+For interaction events, an actor-relative extension adds instance association,
+calibrated ground-contact/depth projection, robust temporal fitting, metric
+distance and closing/lateral speed intervals, TTC, observability, and
+abstention. It is implemented and synthetically tested, but is not yet a
+formally validated 78-sample metric.
+
 ## Three evaluation levels
 
 1. **Level 1, action response:** fixed history, common generation seed, at
@@ -104,6 +110,14 @@ PYTHONPATH=src:. python scripts/mine_nuplan_causal_candidates.py \
 
 Scenario tags remain candidate provenance and are never promoted to formal labels.
 
+Build the opaque three-annotator risk-seed pack:
+
+```bash
+PYTHONPATH=src:. python scripts/build_blind_causal_seed_pack.py \
+  --candidates work/nuplan_causal_candidates.jsonl \
+  --output-dir work/causal_seed_blind_pack
+```
+
 Run the oracle, identical-future, and cyclic action-swap controls:
 
 ```bash
@@ -126,6 +140,16 @@ Re-run the frozen 78-sample image-event probe with a local NAVSIM manifest:
 ```bash
 PYTHON_BIN=/path/to/python \
   bash scripts/run_event78_repro.sh /path/to/event78_manifest.jsonl
+```
+
+Estimate and independently score actor-relative motion:
+
+```bash
+PYTHONPATH=src python scripts/estimate_actor_relative_motion.py \
+  --tracks actor_tracks.jsonl --require-eight-frame-four-second \
+  --output actor_relative_posteriors.jsonl
+PYTHONPATH=src python scripts/evaluate_relative_motion_metrics.py \
+  --records relative_motion_gold_pairs.jsonl --output relative_motion_metrics.json
 ```
 
 ## Current evidence
@@ -152,6 +176,11 @@ The fail-closed risk/clear record contract and scoring definition for the four
 interaction chains are in [Causal Chain Protocol V1 (Chinese)](docs/CAUSAL_CHAIN_PROTOCOL_V1_ZH.md).
 The first real nuPlan candidate-mining run and its evidence boundary are recorded
 in [Causal Chain Candidate Mining (2026-08-26, Chinese)](docs/CAUSAL_CHAIN_CANDIDATE_MINING_20260826_ZH.md).
+The public/private split and annotation fields are defined in
+[Causal Seed Annotation V1 (Chinese)](docs/CAUSAL_SEED_ANNOTATION_V1_ZH.md).
+The actor-relative distance, closing-speed, TTC, and coverage-risk protocol is
+specified in [Actor Relative Motion Capability V1
+(Chinese)](docs/RELATIVE_MOTION_CAPABILITY_V1_ZH.md).
 
 ## Repository map
 
@@ -163,6 +192,10 @@ in [Causal Chain Candidate Mining (2026-08-26, Chinese)](docs/CAUSAL_CHAIN_CANDI
 - `scripts/run_event_control_suite.py`: causal sanity-check controls
 - `scripts/evaluate_causal_chains.py`: four interaction-chain readiness and scoring
 - `scripts/mine_nuplan_causal_candidates.py`: nuPlan four-chain annotation candidate miner
+- `scripts/build_blind_causal_seed_pack.py`: opaque four-chain risk-seed annotation pack
+- `scripts/estimate_actor_relative_motion.py`: candidate-blind actor state posterior
+- `scripts/evaluate_relative_motion_metrics.py`: metric accuracy and coverage-risk report
+- `scripts/compare_flow_backends.py`: paired RAFT/SEA-RAFT decoder comparison
 - `configs/navsim_continuous_decoder_plane.json`: reported default configuration
 - `configs/causal_chain_v1.example.jsonl`: executable four-chain risk/clear example
 - `tests/`: unit and protocol tests

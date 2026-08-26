@@ -30,7 +30,7 @@ def _json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def evaluate_record(record: dict[str, Any], extractor: RaftFlowExtractor, config: dict[str, Any], perception: Any | None, dino: Any | None = None) -> dict[str, Any]:
+def evaluate_record(record: dict[str, Any], extractor: RaftFlowExtractor | SeaRaftFlowExtractor, config: dict[str, Any], perception: Any | None, dino: Any | None = None) -> dict[str, Any]:
     image_cfg = config["image"]
     width, height = int(image_cfg["width"]), int(image_cfg["height"])
     flow = extractor.observe(
@@ -636,6 +636,9 @@ def main() -> None:
             checkpoint=str(flow_cfg["checkpoint"]),
             device=args.device,
             iters=int(flow_cfg.get("iters", 12)),
+            forward_backward=bool(flow_cfg.get("forward_backward", True)),
+            fb_abs_threshold_px=float(flow_cfg.get("fb_abs_threshold_px", 1.5)),
+            fb_relative_threshold=float(flow_cfg.get("fb_relative_threshold", 0.05)),
         )
     else:
         extractor = RaftFlowExtractor(

@@ -14,6 +14,31 @@ They must not be compared as if they were produced on one common split.
 - Explicitly inactive: metric depth, SegFormer, DINOv2, temporal road filter,
   adaptive road plane, and speed in the primary score.
 
+## SEA-RAFT matched flow ablation
+
+- Split: the same balanced 78-sample manifest and decoder thresholds as the
+  primary event result.
+- RAFT-Large decoded 78/78; SEA-RAFT decoded 77/78.
+- SEA-RAFT improved mean speed relative error from 0.307247 to 0.291543 and
+  longitudinal diagnostic accuracy from 0.625000 to 0.672078.
+- It regressed weighted joint error from 0.431435 to 0.646236, lateral MAE
+  from 0.135017 m to 0.223629 m, and lateral event macro-F1 from 0.974382 to
+  0.964305.
+- Decision: RAFT-Large remains the frozen default. SEA-RAFT is a speed-side
+  challenger, not the best overall backend.
+- This 4-frame, approximately 2-second run does not validate actor-relative
+  speed under the proposed 8-frame, 4-second protocol.
+
+## Actor-relative state capability
+
+- Protocol and implementation: `src/iac_new/relative_motion.py` and
+  `docs/RELATIVE_MOTION_CAPABILITY_V1_ZH.md`.
+- Implemented: calibrated ground-contact/depth projection, robust temporal
+  fitting, distance/closing/lateral speed intervals, TTC, corridor entry,
+  observability, abstention, and coverage-risk metrics.
+- Evidence status: implementation complete and synthetically tested; no formal
+  78-sample actor-ground-truth result has been claimed.
+
 ## Smooth-decoder ablation (different dense-curvature split)
 
 - Selected setting: `smooth_010`.

@@ -7,28 +7,54 @@ import os
 from argparse import Namespace
 from pathlib import Path
 
-import cv2
 import numpy as np
 
-from .flow import FlowObservation, forward_backward_mask
-from .geometry import scale_intrinsics
+from .flow import (
+    FlowObservation,
+    RaftFlowExtractor,
+    forward_backward_mask,
+    long_range_flow_residual,
+)
 
 
 class SeaRaftFlowExtractor:
-    def __init__(self, *, checkpoint: str, device: str, iters: int = 12) -> None:
+    def __init__(
+        self,
+        *,
+        checkpoint: str,
+        device: str,
+        iters: int = 12,
+        forward_backward: bool = True,
+        fb_abs_threshold_px: float = 1.5,
+        fb_relative_threshold: float = 0.05,
+    ) -> None:
         import torch
 
         self.torch = torch
         self.device = device
         self.iters = int(iters)
-        sea_root = Path(checkpoint).resolve().parents[1] / "SEA-RAFT"
-        if not sea_root.exists():
-            configured_root = os.environ.get("SEA_RAFT_ROOT")
-            if configured_root is None:
-                raise FileNotFoundError(
-                    "SEA-RAFT source tree not found; set SEA_RAFT_ROOT"
-                )
-            sea_root = Path(configured_root)
+        self.model_size = "sea_raft_m"
+        self.use_forward_backward = bool(forward_backward)
+        self.fb_abs_threshold_px = float(fb_abs_threshold_px)
+        self.fb_relative_threshold = float(fb_relative_threshold)
+        checkpoint_path = Path(checkpoint).resolve()
+        configured_root = os.environ.get("SEA_RAFT_ROOT")
+        candidates = []
+        if configured_root:
+            candidates.append(Path(configured_root).expanduser())
+        candidates.extend([
+            checkpoint_path.parents[2] / "SEA-RAFT",
+            checkpoint_path.parents[1] / "SEA-RAFT",
+            Path.home() / "SEA-RAFT",
+        ])
+        sea_root = next((path.resolve() for path in candidates if path.exists()), None)
+        if sea_root is None:
+            searched = ", ".join(str(path) for path in candidates)
+            raise FileNotFoundError(
+                f"SEA-RAFT source tree not found; searched: {searched}; "
+                "set SEA_RAFT_ROOT explicitly"
+            )
+        self.source_root = str(sea_root)
         sys.path.insert(0, str(sea_root))
         sys.path.insert(0, str(sea_root / "core"))
         from raft import RAFT
@@ -48,27 +74,52 @@ class SeaRaftFlowExtractor:
         self.model = model.to(device).eval()
 
     @staticmethod
-    def _read_images(paths: list[str], target_size: tuple[int, int]) -> list[np.ndarray]:
-        width, height = target_size
-        images = []
-        for path in paths:
-            image = cv2.imread(str(Path(path)), cv2.IMREAD_COLOR)
-            if image is None:
-                raise FileNotFoundError(path)
-            image = cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
-            images.append(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-        return images
+    def _read_images(
+        paths: list[str],
+        intrinsics: np.ndarray,
+        distortion: np.ndarray,
+        target_size: tuple[int, int],
+        allow_mixed_source_sizes: bool = False,
+    ) -> tuple[list[np.ndarray], np.ndarray, tuple[int, int]]:
+        return RaftFlowExtractor._read_images(
+            paths,
+            intrinsics,
+            distortion,
+            target_size,
+            allow_mixed_source_sizes=allow_mixed_source_sizes,
+        )
 
-    def _infer_pairs(self, first: list[np.ndarray], second: list[np.ndarray]) -> np.ndarray:
+    def _infer_pairs(
+        self,
+        first: list[np.ndarray],
+        second: list[np.ndarray],
+        *,
+        return_uncertainty: bool = False,
+        uncertainty_tail: int = 8,
+    ) -> tuple[np.ndarray, np.ndarray | None]:
+        if len(first) != len(second):
+            raise ValueError("SEA-RAFT pair lists must have equal length")
         torch = self.torch
         outputs = []
+        uncertainties = []
         for left, right in zip(first, second):
             image1 = torch.from_numpy(left.copy()).permute(2, 0, 1).float()[None].to(self.device)
             image2 = torch.from_numpy(right.copy()).permute(2, 0, 1).float()[None].to(self.device)
             with torch.inference_mode():
-                prediction = self.model(image1, image2, iters=self.iters, test_mode=True)["flow"][-1]
+                result = self.model(image1, image2, iters=self.iters, test_mode=True)
+                predictions = result["flow"]
+                prediction = predictions[-1]
             outputs.append(prediction[0].permute(1, 2, 0).float().cpu().numpy())
-        return np.stack(outputs, axis=0).astype(np.float32)
+            if return_uncertainty:
+                tail = predictions[-max(2, min(int(uncertainty_tail), len(predictions))):]
+                stack = torch.stack(tail, dim=0)
+                spread = torch.sqrt(torch.mean((stack - stack[-1:]) ** 2, dim=0))
+                uncertainties.append(spread[0, 0].float().cpu().numpy())
+        flow = np.stack(outputs, axis=0).astype(np.float32)
+        uncertainty = None
+        if return_uncertainty:
+            uncertainty = np.stack(uncertainties, axis=0).astype(np.float32)
+        return flow, uncertainty
 
     def observe(
         self,
@@ -77,21 +128,49 @@ class SeaRaftFlowExtractor:
         distortion: np.ndarray,
         target_size: tuple[int, int],
         allow_mixed_source_sizes: bool = False,
+        return_uncertainty: bool = False,
+        uncertainty_tail: int = 8,
+        long_range_consistency: bool = False,
     ) -> FlowObservation:
         if len(frame_paths) < 2:
             raise ValueError("at least two video frames are required")
-        images = self._read_images(frame_paths, target_size)
-        forward = self._infer_pairs(images[:-1], images[1:])
-        backward = self._infer_pairs(images[1:], images[:-1])
-        width, height = target_size
-        masks = np.stack([
-            forward_backward_mask(fwd, bwd, absolute_threshold_px=1.5, relative_threshold=0.05)
-            for fwd, bwd in zip(forward, backward)
-        ], axis=0)
-        source = cv2.imread(str(Path(frame_paths[0])), cv2.IMREAD_COLOR)
-        source_size = (int(source.shape[1]), int(source.shape[0]))
-        scaled = scale_intrinsics(np.asarray(intrinsics, dtype=np.float64), source_size, target_size)
+        images, scaled, source_size = self._read_images(
+            frame_paths,
+            np.asarray(intrinsics, dtype=np.float64),
+            np.asarray(distortion, dtype=np.float64),
+            target_size,
+            allow_mixed_source_sizes=allow_mixed_source_sizes,
+        )
+        forward, forward_uncertainty = self._infer_pairs(
+            images[:-1],
+            images[1:],
+            return_uncertainty=return_uncertainty,
+            uncertainty_tail=uncertainty_tail,
+        )
+        long_range_residual = None
+        if long_range_consistency and len(images) >= 3:
+            skip_forward, _ = self._infer_pairs(images[:-2], images[2:])
+            residuals = [
+                long_range_flow_residual(direct, skip)
+                for direct, skip in zip(forward[:-1], skip_forward)
+            ]
+            residuals.append(np.full(forward[-1].shape[:2], np.nan, dtype=np.float32))
+            long_range_residual = np.stack(residuals, axis=0)
+        masks = None
+        if self.use_forward_backward:
+            backward, _ = self._infer_pairs(images[1:], images[:-1])
+            masks = np.stack([
+                forward_backward_mask(
+                    fwd,
+                    bwd,
+                    absolute_threshold_px=self.fb_abs_threshold_px,
+                    relative_threshold=self.fb_relative_threshold,
+                )
+                for fwd, bwd in zip(forward, backward)
+            ], axis=0)
         return FlowObservation(
             forward=forward, consistency_masks=masks, intrinsics=scaled,
             source_size=source_size, target_size=target_size,
+            refinement_uncertainty=forward_uncertainty,
+            long_range_residual=long_range_residual,
         )

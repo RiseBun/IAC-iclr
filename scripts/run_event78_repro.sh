@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 MANIFEST="${1:?usage: run_event78_repro.sh MANIFEST [RUN_DIR]}"
 RUN_DIR="${2:-${ROOT}/results/repro_event78_$(date +%Y%m%d_%H%M%S)}"
-CONFIG="${ROOT}/configs/navsim_continuous_decoder_plane.json"
+CONFIG="${CONFIG:-${ROOT}/configs/navsim_continuous_decoder_plane.json}"
 
 export PYTHONPATH="${ROOT}/src"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
@@ -28,7 +28,7 @@ nvidia-smi -q > "${RUN_DIR}/NVIDIA_SMI.txt"
   'import cv2,numpy,torch,torchvision; print({"torch":torch.__version__,"torchvision":torchvision.__version__,"numpy":numpy.__version__,"opencv":cv2.__version__})' \
   > "${RUN_DIR}/RUNTIME_VERSIONS.txt"
 
-"${PYTHON_BIN}" -m pytest -q "${ROOT}/tests" | tee "${RUN_DIR}/pytest.log"
+"${PYTHON_BIN}" -m pytest -q --import-mode=importlib "${ROOT}/tests" | tee "${RUN_DIR}/pytest.log"
 
 "${PYTHON_BIN}" "${ROOT}/scripts/evaluate_continuous_decoder.py" \
   --manifest "${RUN_MANIFEST}" \
