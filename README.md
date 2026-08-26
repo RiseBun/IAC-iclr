@@ -83,6 +83,27 @@ PYTHONPATH=src:. python scripts/evaluate_event_causal_metrics.py \
   --output work/event_causal_report.json
 ```
 
+Evaluate the four interaction-level risk/clear causal chains:
+
+```bash
+PYTHONPATH=src:. python scripts/evaluate_causal_chains.py \
+  --records configs/causal_chain_v1.example.jsonl \
+  --output work/causal_chain_report.json \
+  --require-ready
+```
+
+Mine a high-recall, annotation-only candidate pool from nuPlan mini logs:
+
+```bash
+PYTHONPATH=src:. python scripts/mine_nuplan_causal_candidates.py \
+  --db-root /path/to/nuplan-v1.1/splits/mini \
+  --sensor-root /path/to/sensor_blobs \
+  --output work/nuplan_causal_candidates.jsonl \
+  --max-per-chain 40
+```
+
+Scenario tags remain candidate provenance and are never promoted to formal labels.
+
 Run the oracle, identical-future, and cyclic action-swap controls:
 
 ```bash
@@ -124,7 +145,13 @@ See [the metric specification](docs/EVENT_CAUSAL_METRICS_V1.md), [method
 provenance](docs/BEST_METHOD_PROVENANCE.md), and [snapshot
 scope](docs/IAC_RAFT_EVENT_CAUSAL_V1_SCOPE.md). The independent WAM-video
 validation protocol is specified in
-[Measurement Validity V1](docs/MEASUREMENT_VALIDITY_V1.md).
+[Measurement Validity V1](docs/MEASUREMENT_VALIDITY_V1.md). The recent AD-WAM
+input/output survey, action-head comparison, and proposed event taxonomy are
+documented in [AD-WAM Landscape and Event Taxonomy (2026-08-26, Chinese)](docs/AD_WAM_LANDSCAPE_AND_EVENT_TAXONOMY_20260826_ZH.md).
+The fail-closed risk/clear record contract and scoring definition for the four
+interaction chains are in [Causal Chain Protocol V1 (Chinese)](docs/CAUSAL_CHAIN_PROTOCOL_V1_ZH.md).
+The first real nuPlan candidate-mining run and its evidence boundary are recorded
+in [Causal Chain Candidate Mining (2026-08-26, Chinese)](docs/CAUSAL_CHAIN_CANDIDATE_MINING_20260826_ZH.md).
 
 ## Repository map
 
@@ -134,7 +161,10 @@ validation protocol is specified in
 - `scripts/audit_event_benchmark.py`: formal benchmark gate and scene split
 - `scripts/evaluate_event_causal_metrics.py`: Event-CC, Event-FCS, and FUI
 - `scripts/run_event_control_suite.py`: causal sanity-check controls
+- `scripts/evaluate_causal_chains.py`: four interaction-chain readiness and scoring
+- `scripts/mine_nuplan_causal_candidates.py`: nuPlan four-chain annotation candidate miner
 - `configs/navsim_continuous_decoder_plane.json`: reported default configuration
+- `configs/causal_chain_v1.example.jsonl`: executable four-chain risk/clear example
 - `tests/`: unit and protocol tests
 
 Model checkpoints, datasets, generated videos, and experiment outputs are not
