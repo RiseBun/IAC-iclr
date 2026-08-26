@@ -1,0 +1,33 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Models, datasets, generated media, and experiment outputs are external.
+checkpoints/
+model_checkpoints/
+data/
+datasets/
+results/
+work/
+outputs/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.pkl
+*.pickle
+*.npz
+*.npy
+*.mp4
+
+# IDE and local environment files.
+.env
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
