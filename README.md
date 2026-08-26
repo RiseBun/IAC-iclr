@@ -91,6 +91,15 @@ PYTHONPATH=src:. python scripts/run_event_control_suite.py \
   --output work/control_suite.json
 ```
 
+Validate the frozen probe against blinded human labels on actual WAM videos:
+
+```bash
+PYTHONPATH=src python scripts/build_blind_event_annotation_pack.py \
+  --source epona /path/to/epona_manifest.jsonl /path/to/epona_event_groups.jsonl \
+  --source drivewam /path/to/drivewam_manifest.jsonl /path/to/drivewam_event_groups.jsonl \
+  --output-dir work/blind_event_annotations
+```
+
 Re-run the frozen 78-sample image-event probe with a local NAVSIM manifest:
 
 ```bash
@@ -113,7 +122,9 @@ because their records predate the complete seed/history/planner-rerun contract.
 
 See [the metric specification](docs/EVENT_CAUSAL_METRICS_V1.md), [method
 provenance](docs/BEST_METHOD_PROVENANCE.md), and [snapshot
-scope](docs/IAC_RAFT_EVENT_CAUSAL_V1_SCOPE.md).
+scope](docs/IAC_RAFT_EVENT_CAUSAL_V1_SCOPE.md). The independent WAM-video
+validation protocol is specified in
+[Measurement Validity V1](docs/MEASUREMENT_VALIDITY_V1.md).
 
 ## Repository map
 
