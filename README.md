@@ -107,9 +107,21 @@ For Level-1 distance alignment, `relative` is now the primary mode: each image
 and action profile is independently normalized by its terminal forward progress,
 so the score measures temporal progress shape without requiring absolute metric
 scale. Absolute metric distance remains an uncertainty-labelled diagnostic.
-The 78-sample proxy passes the relative history/shuffle/reversal gates, but its
-motion strata are still imbalanced and do not yet establish cross-scenario WAM
-validity.
+The 78-sample proxy passes the relative history/shuffle/reversal gates. The
+frozen longitudinal-first stratification contains 48 acceleration, 5 braking,
+14 lateral-turn, and 11 straight-cruise samples across 19 scenes. After
+observability and relative-amplitude abstention, 40 samples are usable (37
+acceleration, 3 lateral-turn); braking and straight-cruise coverage is still
+insufficient, so this does not yet establish cross-scenario WAM validity.
+
+Rebuild the stratified manifest with:
+
+```bash
+PYTHONPATH=src:. python scripts/build_level1_relative_stratified_manifest.py \
+  --manifest results/navsim_level1_relative_stratified_net_speed.jsonl \
+  --output-manifest results/navsim_level1_relative_stratified_net_speed_v2.jsonl \
+  --output-report results/navsim_level1_relative_stratified_net_speed_v2.json
+```
 
 For interaction events, an actor-relative extension adds instance association,
 calibrated ground-contact/depth projection, robust temporal fitting, metric

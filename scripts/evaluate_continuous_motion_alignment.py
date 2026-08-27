@@ -163,15 +163,16 @@ def _relative_distance_stratum(record: dict[str, Any]) -> str:
     rows = list(record.get("reference_motion_profile", {}).get("rows") or [])
     if not rows:
         return "unknown"
-    accelerations = np.asarray([float(row.get("acceleration_mps2", 0.0)) for row in rows], dtype=np.float64)
+    speeds = np.asarray([float(row.get("speed_mps", 0.0)) for row in rows], dtype=np.float64)
     lateral = np.asarray([abs(float(row.get("lateral_speed_mps", 0.0))) for row in rows], dtype=np.float64)
     yaw = np.asarray([abs(float(row.get("yaw_rate_radps", 0.0))) for row in rows], dtype=np.float64)
+    speed_delta = float(speeds[-1] - speeds[0])
+    if speed_delta <= -1.0:
+        return "braking"
+    if speed_delta >= 1.0:
+        return "acceleration"
     if float(max(lateral.max(initial=0.0), yaw.max(initial=0.0))) >= 0.08:
         return "lateral_turn"
-    if float(accelerations.max(initial=0.0)) >= 0.30:
-        return "acceleration"
-    if float(accelerations.min(initial=0.0)) <= -0.30:
-        return "braking"
     return "straight_cruise"
 
 

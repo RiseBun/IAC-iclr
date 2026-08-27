@@ -216,10 +216,19 @@ Level-1 的连续主证据，但不等价于绝对距离恢复。
 | time-reversal | 2.6602 | [2.1172, 3.2162] | 35 |
 
 三项 CI 下界均大于零，报告中的 `relative_progress_signal_resolved=true`。这证明
-当前样本上相对进展不是单纯的历史匀速复制，也依赖正确的时间顺序。不过运动分层
-仍然不平衡：`lateral_turn=37`、`acceleration=3`，没有足够的 braking/straight
-样本。因此这一步冻结的是**相对进展的测量定义和统计门槛**，不是跨场景泛化结论；
-正式 WAM 评测前必须补齐纵向激励分层。
+当前样本上相对进展不是单纯的历史匀速复制，也依赖正确的时间顺序。
+
+为避免把单一运动类型的成功误报成通用能力，新增了固定的纵向优先分层协议：以参考
+轨迹 4 秒净速度变化 `>=1.0 m/s` 判为 acceleration、`<=-1.0 m/s` 判为 braking，
+否则再以横向速度/偏航率 `0.08` 阈值判为 lateral_turn，剩余为 straight_cruise。
+78 条输入的分层为 `acceleration=48`、`braking=5`、`lateral_turn=14`、
+`straight_cruise=11`，覆盖 19 个场景。重跑 V5 后，47 条总体可评估样本中只有 40 条
+通过相对进展幅度门控，其中 `acceleration=37`、`lateral_turn=3`；braking 和
+straight_cruise 尚无足够可用样本。这说明**统计门槛已通过，但跨运动类型泛化尚未
+证明**，正式 WAM 评测前仍需补齐可观测的制动/直行窗口。
+
+分层脚本为 `scripts/build_level1_relative_stratified_manifest.py`，当前协议产物为
+`results/navsim_level1_relative_stratified_net_speed_v2.jsonl` 及对应报告。
 
 ### 6.2 V5 历史尺度校正消融
 
