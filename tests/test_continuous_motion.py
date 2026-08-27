@@ -84,7 +84,7 @@ class ContinuousMotionTest(unittest.TestCase):
         self.assertGreater(result["speed_posterior"]["mean_wis_90"], 0.0)
         self.assertFalse(result["leakage_audit"]["action_waypoint_visible_to_image_decoder"])
 
-    def test_distance_alignment_has_metric_and_scale_free_modes(self) -> None:
+    def test_distance_alignment_has_metric_scale_free_and_relative_modes(self) -> None:
         times = [0.5, 1.0, 1.5, 2.0]
         imagined = image_motion_profile(decoder([4.0, 4.0, 4.0, 4.0]), times, initial_speed_mps=4.0)
         action = trajectory_to_motion_profile(
@@ -94,8 +94,11 @@ class ContinuousMotionTest(unittest.TestCase):
         )
         metric = compare_distance_profiles(imagined, action, scale_mode="metric")
         shape = compare_distance_profiles(imagined, action, scale_mode="scale_free")
+        relative = compare_distance_profiles(imagined, action, scale_mode="relative")
         assert metric["metrics"]["forward_displacement_profile"]["mae"] > 0.0
         assert shape["metrics"]["forward_displacement_profile"]["mae"] == 0.0
+        assert relative["metrics"]["forward_displacement_profile"]["mae"] == 0.0
+        assert relative["metrics"]["forward_displacement_profile"]["endpoint_abs_error"] == 0.0
         assert shape["leakage_audit"]["action_used_for_image_scale"] is False
 
     def test_pose_alignment_compares_forward_lateral_and_heading(self) -> None:
@@ -110,8 +113,10 @@ class ContinuousMotionTest(unittest.TestCase):
         )
         metric = compare_pose_profiles(imagined, action, scale_mode="metric")
         shape = compare_pose_profiles(imagined, action, scale_mode="scale_free")
+        relative = compare_pose_profiles(imagined, action, scale_mode="relative")
         assert metric["metrics"]["se2_pose"]["forward_mae"] > 0.0
         assert shape["metrics"]["se2_pose"]["path_cosine"] > 0.99
+        assert relative["metrics"]["se2_pose"]["path_cosine"] > 0.99
         assert shape["leakage_audit"]["action_used_for_image_scale"] is False
 
     def test_pose_posterior_reports_component_and_joint_coverage(self) -> None:

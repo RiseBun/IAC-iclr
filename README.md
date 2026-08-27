@@ -103,6 +103,11 @@ with observability, abstention, posterior coverage, and coverage-risk curves.
 RAFT-Large remains the default because it completed 78/78 samples; SEA-RAFT is
 a challenger. Their paired speed difference is not statistically resolved.
 
+For Level-1 distance alignment, `relative` is now the primary mode: each image
+and action profile is independently normalized by its terminal forward progress,
+so the score measures temporal progress shape without requiring absolute metric
+scale. Absolute metric distance remains an uncertainty-labelled diagnostic.
+
 For interaction events, an actor-relative extension adds instance association,
 calibrated ground-contact/depth projection, robust temporal fitting, metric
 distance and closing/lateral speed intervals, TTC, observability, and

@@ -646,17 +646,18 @@ def compare_distance_profiles(
     scale_mode: str = "metric",
     include_uncertain: bool = False,
 ) -> dict[str, Any]:
-    """Compare forward displacement, with a scale-free fallback.
+    """Compare forward displacement in metric or relative-shape coordinates.
 
     ``metric`` compares the independently recovered forward displacement in
-    metres. ``scale_free`` normalizes each profile by its own terminal forward
-    displacement, so it evaluates temporal shape without borrowing scale from
-    the action branch.
+    metres. ``scale_free`` normalizes each profile by its largest absolute
+    displacement. ``relative`` normalizes by each profile's terminal forward
+    displacement and is the Level-1 primary distance shape measure; neither
+    mode borrows scale from the action branch.
     """
     if image_profile.get("source") not in IMAGE_PROFILE_SOURCES:
         raise ValueError("image_profile must be produced independently from action waypoints")
-    if scale_mode not in {"metric", "scale_free"}:
-        raise ValueError("scale_mode must be metric or scale_free")
+    if scale_mode not in {"metric", "scale_free", "relative"}:
+        raise ValueError("scale_mode must be metric, scale_free, or relative")
     predicted_rows = list(image_profile.get("rows") or [])
     action_rows = list(action_profile.get("rows") or [])
     if not predicted_rows or len(predicted_rows) != len(action_rows):
@@ -666,9 +667,13 @@ def compare_distance_profiles(
     if not np.all(np.isfinite(predicted)) or not np.all(np.isfinite(action)):
         raise ValueError("forward displacement must be finite")
     scale_ratio = None
-    if scale_mode == "scale_free":
-        predicted_scale = float(np.max(np.abs(predicted)))
-        action_scale = float(np.max(np.abs(action)))
+    if scale_mode in {"scale_free", "relative"}:
+        if scale_mode == "relative":
+            predicted_scale = float(abs(predicted[-1]))
+            action_scale = float(abs(action[-1]))
+        else:
+            predicted_scale = float(np.max(np.abs(predicted)))
+            action_scale = float(np.max(np.abs(action)))
         if predicted_scale < 0.5 or action_scale < 0.5:
             return {
                 "protocol": "continuous-forward-distance-alignment-v1",
@@ -677,7 +682,7 @@ def compare_distance_profiles(
                 "coverage": 0.0,
                 "evaluable_intervals": 0,
                 "total_intervals": len(predicted_rows),
-                "reason": "forward_displacement_amplitude_too_small_for_scale_free_profile",
+                "reason": "forward_displacement_amplitude_too_small_for_relative_profile",
                 "metrics": {"forward_displacement_profile": {"mae": None, "rmse": None, "endpoint_abs_error": None, "increment_mae": None, "curve_cosine": None, "count": 0}},
             }
         scale_ratio = predicted_scale / action_scale
@@ -749,8 +754,8 @@ def compare_pose_profiles(
     """Compare the time-indexed planar pose ``[x, y, heading]``."""
     if image_profile.get("source") not in IMAGE_PROFILE_SOURCES:
         raise ValueError("image_profile must be produced independently from action waypoints")
-    if scale_mode not in {"metric", "scale_free"}:
-        raise ValueError("scale_mode must be metric or scale_free")
+    if scale_mode not in {"metric", "scale_free", "relative"}:
+        raise ValueError("scale_mode must be metric, scale_free, or relative")
     predicted_rows = list(image_profile.get("rows") or [])
     action_rows = list(action_profile.get("rows") or [])
     if not predicted_rows or len(predicted_rows) != len(action_rows):
@@ -760,9 +765,13 @@ def compare_pose_profiles(
     if not np.all(np.isfinite(predicted)) or not np.all(np.isfinite(action)):
         raise ValueError("pose values must be finite")
     scale_ratio = None
-    if scale_mode == "scale_free":
-        predicted_scale = float(np.max(np.linalg.norm(predicted[:, :2], axis=1)))
-        action_scale = float(np.max(np.linalg.norm(action[:, :2], axis=1)))
+    if scale_mode in {"scale_free", "relative"}:
+        if scale_mode == "relative":
+            predicted_scale = float(abs(predicted[-1, 0]))
+            action_scale = float(abs(action[-1, 0]))
+        else:
+            predicted_scale = float(np.max(np.linalg.norm(predicted[:, :2], axis=1)))
+            action_scale = float(np.max(np.linalg.norm(action[:, :2], axis=1)))
         if predicted_scale < 0.5 or action_scale < 0.5:
             return {
                 "protocol": "continuous-se2-pose-alignment-v1",
@@ -771,7 +780,7 @@ def compare_pose_profiles(
                 "coverage": 0.0,
                 "evaluable_intervals": 0,
                 "total_intervals": len(predicted_rows),
-                "reason": "translation_amplitude_too_small_for_scale_free_pose",
+                "reason": "translation_amplitude_too_small_for_relative_pose",
                 "metrics": {"se2_pose": {"translation_mae": None, "forward_mae": None, "lateral_mae": None, "heading_mae_rad": None, "endpoint_translation_error": None, "endpoint_heading_error_rad": None, "path_cosine": None, "count": 0}},
             }
         scale_ratio = predicted_scale / action_scale

@@ -454,6 +454,7 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
     for mode, record_key in (
         ("metric", "distance_alignment_metric"),
         ("scale_free", "distance_alignment_scale_free"),
+        ("relative", "distance_alignment_relative"),
     ):
         distance_records = [
             record.get(record_key, {}) for record in records
@@ -473,12 +474,18 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
             "sample_mean_increment_mae": None if not increments else float(np.mean(increments)),
             "sample_mean_endpoint_abs_error": None if not endpoint else float(np.mean(endpoint)),
             "sample_mean_curve_cosine": None if not cosines else float(np.mean(cosines)),
-            "unit": "m" if mode == "metric" else "normalized_max_abs_forward_displacement",
+            "unit": (
+                "m" if mode == "metric"
+                else "normalized_terminal_forward_displacement"
+                if mode == "relative"
+                else "normalized_max_abs_forward_displacement"
+            ),
         }
     pose_summary: dict[str, Any] = {}
     for mode, record_key in (
         ("metric", "pose_alignment_metric"),
         ("scale_free", "pose_alignment_scale_free"),
+        ("relative", "pose_alignment_relative"),
     ):
         pose_records = [
             record.get(record_key, {}) for record in records
@@ -497,7 +504,12 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
             "sample_mean_endpoint_translation_error": mean_value("endpoint_translation_error"),
             "sample_mean_endpoint_heading_error_rad": mean_value("endpoint_heading_error_rad"),
             "sample_mean_path_cosine": mean_value("path_cosine"),
-            "unit": "m/rad" if mode == "metric" else "normalized_translation/rad",
+            "unit": (
+                "m/rad" if mode == "metric"
+                else "normalized_terminal_forward/rad"
+                if mode == "relative"
+                else "normalized_translation/rad"
+            ),
         }
     pose_posterior_records = [
         record.get("pose_posterior", {})
@@ -585,6 +597,8 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
         "raw_absolute_image_metrics": raw_metrics,
         "forward_distance_alignment": distance_summary,
         "se2_pose_alignment": pose_summary,
+        "primary_distance_alignment": "relative",
+        "primary_pose_alignment": "relative",
         "se2_pose_posterior": {
             "samples": len(pose_posterior_records),
             "nominal_coverage": 0.90,
@@ -737,6 +751,12 @@ def main() -> None:
         pose_alignment_scale_free = compare_pose_profiles(
             imagined, reference, scale_mode="scale_free", include_uncertain=args.include_uncertain
         )
+        distance_alignment_relative = compare_distance_profiles(
+            imagined, reference, scale_mode="relative", include_uncertain=args.include_uncertain
+        )
+        pose_alignment_relative = compare_pose_profiles(
+            imagined, reference, scale_mode="relative", include_uncertain=args.include_uncertain
+        )
         pose_image_profile = (
             apply_pose_interval_calibration(raw_imagined, pose_calibration)
             if pose_calibration is not None
@@ -796,8 +816,10 @@ def main() -> None:
             "comparison": comparison,
             "distance_alignment_metric": distance_alignment_metric,
             "distance_alignment_scale_free": distance_alignment_scale_free,
+            "distance_alignment_relative": distance_alignment_relative,
             "pose_alignment_metric": pose_alignment_metric,
             "pose_alignment_scale_free": pose_alignment_scale_free,
+            "pose_alignment_relative": pose_alignment_relative,
             "pose_posterior": pose_posterior,
             "raw_image_comparison": raw_comparison,
             "longitudinal_behavior": longitudinal_behavior,
