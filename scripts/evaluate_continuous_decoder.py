@@ -121,10 +121,15 @@ def evaluate_record(record: dict[str, Any], extractor: RaftFlowExtractor, config
                     min_predicted_flow_px=float(persistent_scale_cfg.get("min_predicted_flow_px", 0.25)),
                     correction_shrinkage=float(persistent_scale_cfg.get("correction_shrinkage", 0.25)),
                 )
-                if persistent_scale.get("available"):
+                if persistent_scale.get("available") and bool(
+                    persistent_scale_cfg.get("apply_correction", False)
+                ):
                     observed = np.asarray(observed, dtype=np.float32) * float(
                         persistent_scale["future_flow_correction"]
                     )
+                    persistent_scale["applied_to_decoder"] = True
+                elif persistent_scale.get("available"):
+                    persistent_scale["applied_to_decoder"] = False
             except (ValueError, np.linalg.LinAlgError) as error:
                 persistent_scale = {"available": False, "error": str(error)}
     support_weights = np.ones(observed.shape[:-1], dtype=np.float32)

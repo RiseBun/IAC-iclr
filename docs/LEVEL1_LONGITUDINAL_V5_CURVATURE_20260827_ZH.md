@@ -49,4 +49,16 @@ PYTHONPATH=src:. python scripts/evaluate_continuous_motion_alignment.py \
   --output results/level1_v5_curvature_20260827_eval25/level1_strict.json
 ```
 
-下一步仍需接入持久米制尺度 posterior；二阶残差约束只是 V5 的第一块，不能替代 PTC-Depth 风格的跨未来尺度校准。
+## 4. 持久尺度实验的 fail-closed 结论
+
+在同一 25 条评估集上，加入 history-only 地面 homography 流尺度校正后：
+
+| 版本 | speed MAE | delta-speed MAE | 显著变化方向准确率 |
+|---|---:|---:|---:|
+| V5（二阶残差） | 0.528 m/s | 0.625 m/s | 0.754 |
+| V5 + full scale correction | 0.616 m/s | 0.717 m/s | 0.652 |
+| V5 + shrinkage 0.25 | 0.548 m/s | 0.646 m/s | 0.726 |
+
+因此当前地面 homography 与 RAFT 的比例偏差不是稳定的全局尺度误差。持久尺度模块仍会输出 `scale_posterior` 作为诊断，但 `apply_correction=false`，不会改变正式解码结果。只有接入 metric depth 或更可靠的三角化尺度后，才重新开放校正门。
+
+二阶残差约束是当前 V5 的有效增强；持久尺度是下一阶段的待验证能力，不应把失败实验隐藏在默认配置中。

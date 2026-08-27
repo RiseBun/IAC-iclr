@@ -17,6 +17,7 @@
   "score": {"minimum_flow_scale_px": 1.0},
   "persistent_scale_calibration": {
     "enabled": true,
+    "apply_correction": false,
     "min_flow_px": 0.5,
     "min_predicted_flow_px": 0.25,
     "max_points": 1600,
