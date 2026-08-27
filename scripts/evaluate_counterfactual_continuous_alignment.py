@@ -13,6 +13,7 @@ import numpy as np
 
 from iac_new.continuous_motion import (
     compare_counterfactual_motion_deltas,
+    compare_counterfactual_se2_consistency,
     image_motion_profile,
     trajectory_to_motion_profile,
 )
@@ -88,18 +89,47 @@ def main() -> None:
                 image_motion_profile(row.get("decoder") or {}, times, initial_speed_mps=initial_speed),
                 trajectory_to_motion_profile(row.get("action_trajectory"), times, initial_speed_mps=initial_speed),
             )
+        image_clear, action_clear = profiles["clear"]
+        image_risk, action_risk = profiles["risk"]
         reports.append({
             "counterfactual_group_id": group_id,
             "causal_claim_eligible": not issues,
             "readiness_issues": issues,
             "comparison": compare_counterfactual_motion_deltas(
-                profiles["clear"][0], profiles["risk"][0], profiles["clear"][1], profiles["risk"][1]
+                image_clear, image_risk, action_clear, action_risk
             ),
+            "continuous_cfc": {
+                "metric": compare_counterfactual_se2_consistency(
+                    image_clear, image_risk, action_clear, action_risk, scale_mode="metric"
+                ),
+                "scale_free": compare_counterfactual_se2_consistency(
+                    image_clear, image_risk, action_clear, action_risk, scale_mode="scale_free"
+                ),
+            },
         })
+    eligible = [row for row in reports if row["causal_claim_eligible"]]
+    metric_scores = [
+        row["continuous_cfc"]["metric"]["score"]
+        for row in eligible
+        if row["continuous_cfc"]["metric"].get("score") is not None
+    ]
+    scale_free_scores = [
+        row["continuous_cfc"]["scale_free"]["score"]
+        for row in eligible
+        if row["continuous_cfc"]["scale_free"].get("score") is not None
+    ]
     output = {
-        "protocol": "counterfactual-continuous-alignment-report-v1",
+        "protocol": "counterfactual-continuous-alignment-report-v2",
+        "primary_metric": "continuous-counterfactual-foresight-consistency-v1",
         "groups": len(reports),
         "causal_claim_eligible": bool(reports) and all(row["causal_claim_eligible"] for row in reports),
+        "summary": {
+            "eligible_groups": len(eligible),
+            "metric_score_mean": None if not metric_scores else float(np.mean(metric_scores)),
+            "scale_free_score_mean": None if not scale_free_scores else float(np.mean(scale_free_scores)),
+            "metric_score_count": len(metric_scores),
+            "scale_free_score_count": len(scale_free_scores),
+        },
         "reports": reports,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -20,6 +20,12 @@ interpretation and stratification only.
 The converged method, data gates, 78-sample results, and GitHub-rendered flow
 chart are in [Continuous Foresight-Action Alignment V1](docs/CONTINUOUS_FORESIGHT_ALIGNMENT_V1_ZH.md).
 
+The formal Level-2 WAM metric is [Continuous Counterfactual Foresight
+Consistency (CCFC) V1](docs/CONTINUOUS_COUNTERFACTUAL_CONSISTENCY_V1_ZH.md).
+It compares the risk-minus-clear `SE(2)` response of imagined future images
+with the response of the native action head, and reports one geometric-mean
+score plus direction, magnitude, temporal-alignment, and coverage diagnostics.
+
 Current work is focused on [Level 1 Continuous Alignment V2](docs/LEVEL1_CONTINUOUS_ALIGNMENT_V2_ZH.md):
 continuous alignment must beat a strong history-only null, a history-speed
 matched shuffled future, and a time-reversed future before a motion component
@@ -96,7 +102,8 @@ formally validated 78-sample metric.
 2. **Level 1, continuous future-action alignment:** compare `m_F(t)` from the
    generated future with `m_A(t)` from the held-out action head.
 3. **Level 2, counterfactual consistency:** for paired risk/clear interventions,
-   compare `Delta m_F(t)` with `Delta m_A(t)` under a fixed history and seed.
+   report CCFC by comparing `Delta P_F(t)` with `Delta P_A(t)` under a fixed
+   history and seed.
 4. **Level 3, causal closure and FCS:** add planner future-swap reruns,
    independently realized state, and explicit task success.
 

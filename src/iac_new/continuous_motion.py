@@ -1039,3 +1039,234 @@ def compare_counterfactual_motion_deltas(
         "metrics": output,
         "leakage_audit": {"action_waypoint_visible_to_image_decoder": False},
     }
+
+
+def compare_counterfactual_se2_consistency(
+    clear_image: dict[str, Any],
+    risk_image: dict[str, Any],
+    clear_action: dict[str, Any],
+    risk_action: dict[str, Any],
+    *,
+    scale_mode: str = "metric",
+    minimum_translation_delta_m: float = 0.05,
+    minimum_heading_delta_rad: float = 0.01,
+    translation_tolerance_m: float = 0.50,
+    heading_tolerance_rad: float = 0.05,
+) -> dict[str, Any]:
+    """Score causal consistency between imagined and executed SE(2) responses.
+
+    The response is defined as risk-minus-clear.  The image branch is required
+    to be candidate-blind, so this function measures whether the action branch
+    changes in the same direction, with a similar magnitude and at the same
+    times.  ``scale_free`` is a shape-only diagnostic; ``metric`` is the
+    primary report because it retains metre/radian response magnitude.
+    """
+    if scale_mode not in {"metric", "scale_free"}:
+        raise ValueError("scale_mode must be metric or scale_free")
+    if any(
+        not np.isfinite(value) or value < 0.0
+        for value in (
+            minimum_translation_delta_m,
+            minimum_heading_delta_rad,
+            translation_tolerance_m,
+            heading_tolerance_rad,
+        )
+    ):
+        raise ValueError("thresholds and tolerances must be finite and non-negative")
+    profiles = (clear_image, risk_image, clear_action, risk_action)
+    lengths = {len(profile.get("rows") or []) for profile in profiles}
+    if len(lengths) != 1 or not lengths or 0 in lengths:
+        raise ValueError("all counterfactual profiles must have matching rows")
+    for profile in (clear_image, risk_image):
+        if profile.get("source") not in IMAGE_PROFILE_SOURCES:
+            raise ValueError("counterfactual image profiles must be action-blind")
+    total = next(iter(lengths))
+    image_times = np.asarray([float(row["time_s"]) for row in clear_image["rows"]], dtype=np.float64)
+    for profile in profiles[1:]:
+        times = np.asarray([float(row["time_s"]) for row in profile["rows"]], dtype=np.float64)
+        if not np.allclose(image_times, times, atol=1e-6, rtol=0.0):
+            raise ValueError("counterfactual profiles must share an identical time axis")
+
+    def pose(profile: dict[str, Any]) -> np.ndarray:
+        return np.asarray(
+            [[float(row["progress_m"]), float(row["lateral_offset_m"]), float(row["heading_rad"])]
+             for row in profile["rows"]],
+            dtype=np.float64,
+        )
+
+    image_clear = pose(clear_image)
+    image_risk = pose(risk_image)
+    action_clear = pose(clear_action)
+    action_risk = pose(risk_action)
+    if not all(np.all(np.isfinite(value)) for value in (image_clear, image_risk, action_clear, action_risk)):
+        raise ValueError("counterfactual pose values must be finite")
+    image_response = image_risk - image_clear
+    image_response[:, 2] = _wrapped_delta(image_response[:, 2])
+    action_response = action_risk - action_clear
+    action_response[:, 2] = _wrapped_delta(action_response[:, 2])
+    raw_action_translation_norm = np.linalg.norm(action_response[:, :2], axis=1)
+    raw_action_heading_abs = np.abs(action_response[:, 2])
+
+    translation_scale = 1.0
+    image_heading_scale = 1.0
+    action_heading_scale = 1.0
+    if scale_mode == "scale_free":
+        image_translation_scale = float(np.max(np.linalg.norm(image_response[:, :2], axis=1)))
+        action_translation_scale = float(np.max(np.linalg.norm(action_response[:, :2], axis=1)))
+        image_heading_scale = float(np.max(np.abs(image_response[:, 2])))
+        action_heading_scale = float(np.max(np.abs(action_response[:, 2])))
+        if max(image_translation_scale, action_translation_scale) < 1e-9 and max(image_heading_scale, action_heading_scale) < 1e-9:
+            return {
+                "protocol": "continuous-counterfactual-foresight-consistency-v1",
+                "scale_mode": scale_mode,
+                "status": "abstain",
+                "reason": "no_counterfactual_response",
+                "coverage": 0.0,
+                "evaluable_intervals": 0,
+                "total_intervals": total,
+                "score": None,
+            }
+        translation_scale = max(image_translation_scale, action_translation_scale, 1e-9)
+        image_heading_scale = max(image_heading_scale, 1e-9)
+        action_heading_scale = max(action_heading_scale, 1e-9)
+        image_response[:, :2] /= translation_scale
+        action_response[:, :2] /= translation_scale
+        image_response[:, 2] /= image_heading_scale
+        action_response[:, 2] /= action_heading_scale
+
+    active = (raw_action_translation_norm >= minimum_translation_delta_m) | (
+        raw_action_heading_abs >= minimum_heading_delta_rad
+    )
+    valid = []
+    weights = []
+    for index, (ci, ri) in enumerate(zip(clear_image["rows"], risk_image["rows"])):
+        image_usable = ci.get("status") == "usable" and ri.get("status") == "usable"
+        if image_usable and active[index]:
+            valid.append(index)
+            weights.append(max(min(float(ci.get("observability", 0.0)), float(ri.get("observability", 0.0))), 1e-3))
+    if not valid:
+        return {
+            "protocol": "continuous-counterfactual-foresight-consistency-v1",
+            "scale_mode": scale_mode,
+            "status": "abstain",
+            "reason": "no_observable_material_action_response",
+            "coverage": 0.0,
+            "evaluable_intervals": 0,
+            "total_intervals": total,
+            "score": None,
+            "metrics": {},
+        }
+    valid_array = np.asarray(valid, dtype=np.int64)
+    weight_array = np.asarray(weights, dtype=np.float64)
+    image_valid = image_response[valid_array]
+    action_valid = action_response[valid_array]
+
+    translation_errors = np.linalg.norm(image_valid[:, :2] - action_valid[:, :2], axis=1)
+    forward_errors = np.abs(image_valid[:, 0] - action_valid[:, 0])
+    lateral_errors = np.abs(image_valid[:, 1] - action_valid[:, 1])
+    heading_errors = np.abs(_wrapped_delta(image_valid[:, 2] - action_valid[:, 2]))
+    if scale_mode == "metric":
+        translation_scores = np.clip(1.0 - translation_errors / max(translation_tolerance_m, 1e-9), 0.0, 1.0)
+        heading_scores = np.clip(1.0 - heading_errors / max(heading_tolerance_rad, 1e-9), 0.0, 1.0)
+    else:
+        translation_scores = np.clip(1.0 - translation_errors, 0.0, 1.0)
+        heading_scores = np.clip(1.0 - heading_errors, 0.0, 1.0)
+    translation_active = raw_action_translation_norm[valid_array] >= minimum_translation_delta_m
+    heading_active = raw_action_heading_abs[valid_array] >= minimum_heading_delta_rad
+
+    def weighted_mean(values: np.ndarray, mask: np.ndarray | None = None) -> float | None:
+        if mask is not None:
+            values = values[mask]
+            local_weights = weight_array[mask]
+        else:
+            local_weights = weight_array
+        if len(values) == 0:
+            return None
+        return float(np.average(values, weights=local_weights))
+
+    translation_direction = []
+    translation_direction_weights = []
+    for image_value, action_value, weight, is_active in zip(
+        image_valid[:, :2], action_valid[:, :2], weight_array, translation_active
+    ):
+        if not is_active:
+            continue
+        denominator = float(np.linalg.norm(image_value) * np.linalg.norm(action_value))
+        cosine = float(np.dot(image_value, action_value) / denominator) if denominator > 1e-9 else -1.0
+        translation_direction.append((cosine + 1.0) / 2.0)
+        translation_direction_weights.append(weight)
+    heading_direction = [
+        float(np.sign(image_value) == np.sign(action_value))
+        for image_value, action_value, is_active in zip(image_valid[:, 2], action_valid[:, 2], heading_active)
+        if is_active
+    ]
+    direction_parts = []
+    if translation_direction:
+        direction_parts.append(float(np.average(translation_direction, weights=translation_direction_weights)))
+    if heading_direction:
+        direction_parts.append(float(np.mean(heading_direction)))
+    direction_score = float(np.mean(direction_parts)) if direction_parts else None
+
+    response_matrix_image = image_valid.copy()
+    response_matrix_action = action_valid.copy()
+    matrix_weights = np.sqrt(weight_array)[:, None]
+    image_flat = (response_matrix_image * matrix_weights).reshape(-1)
+    action_flat = (response_matrix_action * matrix_weights).reshape(-1)
+    denominator = float(np.linalg.norm(image_flat) * np.linalg.norm(action_flat))
+    temporal_cosine = float(np.dot(image_flat, action_flat) / denominator) if denominator > 1e-9 else -1.0
+    temporal_score = (temporal_cosine + 1.0) / 2.0
+    # If an interval has both translation and heading responses, score both.
+    component_scores = []
+    component_weights = []
+    for score, weight, is_active in zip(translation_scores, weight_array, translation_active):
+        if is_active:
+            component_scores.append(float(score))
+            component_weights.append(float(weight))
+    for score, weight, is_active in zip(heading_scores, weight_array, heading_active):
+        if is_active:
+            component_scores.append(float(score))
+            component_weights.append(float(weight))
+    magnitude_score = float(np.average(component_scores, weights=component_weights)) if component_scores else None
+    sub_scores = [value for value in (direction_score, magnitude_score, temporal_score) if value is not None]
+    score = float(np.prod(sub_scores) ** (1.0 / len(sub_scores))) if sub_scores else None
+    return {
+        "protocol": "continuous-counterfactual-foresight-consistency-v1",
+        "definition": "risk_minus_clear_SE2_image_response_vs_action_response",
+        "scale_mode": scale_mode,
+        "status": "ok" if score is not None else "abstain",
+        "coverage": float(len(valid) / total),
+        "evaluable_intervals": len(valid),
+        "total_intervals": total,
+        "score": score,
+        "subscores": {
+            "response_direction": direction_score,
+            "response_magnitude": magnitude_score,
+            "response_temporal_alignment": temporal_score,
+        },
+        "metrics": {
+            "translation_response": {
+                "mae": float(np.average(translation_errors, weights=weight_array)),
+                "forward_mae": float(np.average(forward_errors, weights=weight_array)),
+                "lateral_mae": float(np.average(lateral_errors, weights=weight_array)),
+                "direction_score": float(np.average(translation_direction, weights=translation_direction_weights)) if translation_direction else None,
+                "count": int(np.sum(translation_active)),
+            },
+            "heading_response": {
+                "mae_rad": float(np.average(heading_errors, weights=weight_array)),
+                "direction_accuracy": float(np.mean(heading_direction)) if heading_direction else None,
+                "count": int(np.sum(heading_active)),
+            },
+            "response_temporal": {"cosine": temporal_cosine},
+        },
+        "normalization": {
+            "translation_scale": float(translation_scale),
+            "image_heading_scale": float(image_heading_scale),
+            "action_heading_scale": float(action_heading_scale),
+            "translation_tolerance_m": float(translation_tolerance_m),
+            "heading_tolerance_rad": float(heading_tolerance_rad),
+        },
+        "leakage_audit": {
+            "action_waypoint_visible_to_image_decoder": False,
+            "action_used_for_image_scale": False,
+        },
+    }

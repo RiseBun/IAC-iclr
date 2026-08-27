@@ -67,7 +67,12 @@ curvature  = wrap(yaw_t - yaw_(t-1)) / ||p_t - p_(t-1)||
 
 不应只报告一个分数。没有 coverage 的低误差可以通过大量拒答获得，没有区间覆盖率的点估计也不能称为可信后验。
 
-### 4.2 反事实连续一致性
+### 4.2 反事实连续一致性（CCFC）
+
+正式的唯一 Level-2 主分数、审计门槛和复现命令见
+[CCFC V1 协议](CONTINUOUS_COUNTERFACTUAL_CONSISTENCY_V1_ZH.md)。本节保留
+底层响应定义；论文报告应使用 CCFC 的 `metric.score`，同时保留三个子项和
+coverage。
 
 对同一历史、相同随机种子和相同模型的 `risk / clear` 分支，分别计算：
 
@@ -76,12 +81,16 @@ Delta m_F(t) = m_F,risk(t) - m_F,clear(t)
 Delta m_A(t) = m_A,risk(t) - m_A,clear(t)
 ```
 
-只在 action 干预幅度超过预注册阈值时评测，报告：
+只在 action 干预幅度超过预注册阈值时评测，CCFC 报告：
 
 - `sign_agreement`：未来与动作变化方向是否一致；
 - `delta_mae`：响应幅度误差；
 - `cosine_alignment`：整个时间响应形状是否一致；
 - 后续加入 onset / peak / recovery 的连续时间误差。
+
+CCFC 的三个子项是 response direction、response magnitude 和 response
+temporal alignment，主分数为三者的几何平均。它是 Level-2 的 WAM 性能
+指标；没有独立闭环执行时，不应把它称为 Foresight-Conditioned Success。
 
 例如 `cut-in` 不再被压成一句“模型想象冲突并刹车”，而是比较风险分支相对清空分支的速度下降量、减速度峰值和响应时刻。
 

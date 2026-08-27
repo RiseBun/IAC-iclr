@@ -7,6 +7,7 @@ from iac_new.continuous_motion import (
     compare_history_baseline,
     compare_longitudinal_behavior,
     compare_counterfactual_motion_deltas,
+    compare_counterfactual_se2_consistency,
     compare_motion_profiles,
     compare_distance_profiles,
     compare_pose_profiles,
@@ -249,6 +250,39 @@ class ContinuousMotionTest(unittest.TestCase):
         result = compare_counterfactual_motion_deltas(clear_image, risk_image, clear_action, risk_action)
         self.assertEqual(result["metrics"]["speed_mps"]["sign_agreement"], 1.0)
         self.assertAlmostEqual(result["metrics"]["speed_mps"]["delta_mae"], 0.0)
+
+    def test_continuous_cfc_is_one_when_future_and_action_responses_match(self) -> None:
+        times = [0.5, 1.0, 1.5, 2.0]
+        clear_decoder = decoder([5.0] * 4, curvature=0.01)
+        risk_decoder = decoder([4.5, 4.0, 3.5, 3.0], curvature=0.03)
+        clear_image = image_motion_profile(clear_decoder, times, initial_speed_mps=5.0)
+        risk_image = image_motion_profile(risk_decoder, times, initial_speed_mps=5.0)
+        clear_action = trajectory_to_motion_profile(clear_decoder["trajectory"], times, initial_speed_mps=5.0)
+        risk_action = trajectory_to_motion_profile(risk_decoder["trajectory"], times, initial_speed_mps=5.0)
+        result = compare_counterfactual_se2_consistency(clear_image, risk_image, clear_action, risk_action)
+        self.assertEqual(result["status"], "ok")
+        self.assertAlmostEqual(result["score"], 1.0, places=6)
+        self.assertAlmostEqual(result["subscores"]["response_direction"], 1.0, places=6)
+
+    def test_continuous_cfc_penalizes_opposite_counterfactual_response(self) -> None:
+        times = [0.5, 1.0, 1.5, 2.0]
+        clear_image = image_motion_profile(decoder([5.0] * 4), times, initial_speed_mps=5.0)
+        risk_image = image_motion_profile(decoder([5.5] * 4), times, initial_speed_mps=5.0)
+        clear_action = trajectory_to_motion_profile(decoder([5.0] * 4)["trajectory"], times, initial_speed_mps=5.0)
+        risk_action = trajectory_to_motion_profile(decoder([4.5] * 4)["trajectory"], times, initial_speed_mps=5.0)
+        result = compare_counterfactual_se2_consistency(clear_image, risk_image, clear_action, risk_action)
+        self.assertEqual(result["status"], "ok")
+        self.assertLess(result["subscores"]["response_direction"], 0.5)
+        self.assertLess(result["score"], 0.5)
+
+    def test_continuous_cfc_abstains_without_material_action_response(self) -> None:
+        times = [0.5, 1.0, 1.5, 2.0]
+        clear = decoder([5.0] * 4)
+        image = image_motion_profile(clear, times, initial_speed_mps=5.0)
+        action = trajectory_to_motion_profile(clear["trajectory"], times, initial_speed_mps=5.0)
+        result = compare_counterfactual_se2_consistency(image, image, action, action)
+        self.assertEqual(result["status"], "abstain")
+        self.assertIsNone(result["score"])
 
     def test_counterfactual_readiness_is_fail_closed(self) -> None:
         base = {
