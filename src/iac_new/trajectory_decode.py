@@ -185,7 +185,11 @@ def _objective(
     weighted = np.where(finite, robust * weights, 0.0)
     denominator = float(np.where(finite, weights, 0.0).sum())
     if denominator <= 1e-6:
-        return float("inf"), predicted, valid
+        # Keep the optimizer numerically total even when this candidate has no
+        # valid projected pixels. The finite worst-case cost lets callers
+        # return an explicit low-coverage result instead of raising; coverage
+        # remains exposed through ``valid`` and downstream observability.
+        return 4.0, predicted, valid
     flow_energy = float(weighted.sum() / denominator)
     road_penalty = _road_prior_penalty(
         trajectory,
@@ -332,6 +336,37 @@ def _road_prior_penalty(
     return float(total_penalty / total_visible) if total_visible else 0.0
 
 
+def _longitudinal_residual_penalty(
+    speeds_mps: np.ndarray,
+    history_speeds_mps: np.ndarray,
+    *,
+    maximum_residual_mps: float,
+    residual_weight: float,
+    residual_smoothness_weight: float,
+) -> float:
+    """Regularize image-driven speed residuals around a frozen history curve."""
+    speeds = np.asarray(speeds_mps, dtype=np.float64)
+    history = np.asarray(history_speeds_mps, dtype=np.float64)
+    if speeds.shape != history.shape or speeds.ndim != 1:
+        raise ValueError("speed and history curves must be matching vectors")
+    if not np.all(np.isfinite(speeds)) or not np.all(np.isfinite(history)):
+        raise ValueError("speed and history curves must be finite")
+    if maximum_residual_mps <= 0.0 or not np.isfinite(maximum_residual_mps):
+        raise ValueError("maximum_residual_mps must be finite and positive")
+    if min(residual_weight, residual_smoothness_weight) < 0.0:
+        raise ValueError("longitudinal residual weights must be non-negative")
+    residual = speeds - history
+    if np.any(np.abs(residual) > maximum_residual_mps + 1e-6):
+        return float("inf")
+    scale = max(float(maximum_residual_mps), 1.0)
+    magnitude = float(np.mean((residual / scale) ** 2))
+    smoothness = (
+        0.0 if len(residual) < 2
+        else float(np.mean((np.diff(residual) / scale) ** 2))
+    )
+    return float(residual_weight * magnitude + residual_smoothness_weight * smoothness)
+
+
 def _fit_once(
     *,
     future_times_s: np.ndarray,
@@ -347,6 +382,11 @@ def _fit_once(
     max_iterations: int,
     initial_curvatures_1pm: np.ndarray | None = None,
     fixed_speeds_mps: np.ndarray | None = None,
+    history_speeds_mps: np.ndarray | None = None,
+    history_initial_speed_mps: float | None = None,
+    maximum_speed_residual_mps: float = 3.0,
+    speed_residual_weight: float = 0.02,
+    speed_residual_smoothness_weight: float = 0.05,
     road_masks: np.ndarray | None = None,
     road_prior_weight: float = 0.0,
     road_half_width_m: float = 1.1,
@@ -368,12 +408,34 @@ def _fit_once(
     if curvature_start.shape != (count,) or not np.all(np.isfinite(curvature_start)):
         raise ValueError("initial_curvatures_1pm must match future_times_s")
     fixed_speeds = None if fixed_speeds_mps is None else np.asarray(fixed_speeds_mps, dtype=np.float64)
+    history_speeds = None if history_speeds_mps is None else np.asarray(history_speeds_mps, dtype=np.float64)
+    if fixed_speeds is not None and history_speeds is not None:
+        raise ValueError("fixed speeds and history-anchored residual mode are mutually exclusive")
+    if history_speeds is not None and (
+        history_initial_speed_mps is None
+        or not np.isfinite(history_initial_speed_mps)
+        or history_initial_speed_mps < 0.0
+    ):
+        raise ValueError("history residual mode requires a finite non-negative initial speed")
+    if history_speeds is not None:
+        if history_speeds.shape != (count,) or not np.all(np.isfinite(history_speeds)):
+            raise ValueError("history_speeds_mps must be a finite vector matching future_times_s")
+        history_speeds = np.clip(history_speeds, 0.05, 30.0)
     if fixed_speeds is not None:
         if fixed_speeds.shape != (count,) or not np.all(np.isfinite(fixed_speeds)):
             raise ValueError("fixed_speeds_mps must be a finite vector matching future_times_s")
         fixed_speeds = np.clip(fixed_speeds, 0.05, 30.0)
         params = np.clip(curvature_start, -0.35, 0.35)
         steps = np.full(count, 0.08, dtype=np.float64)
+    elif history_speeds is not None:
+        params = np.concatenate([
+            np.zeros(count, dtype=np.float64),
+            np.clip(curvature_start, -0.35, 0.35),
+        ])
+        steps = np.concatenate([
+            np.full(count, min(0.5, maximum_speed_residual_mps), dtype=np.float64),
+            np.full(count, 0.08, dtype=np.float64),
+        ])
     else:
         params = np.concatenate([
             np.full(count, np.clip(initial_speed_mps, 0.2, 25.0), dtype=np.float64),
@@ -385,12 +447,18 @@ def _fit_once(
         ])
 
     def evaluate(values: np.ndarray) -> float:
-        speeds = fixed_speeds if fixed_speeds is not None else np.clip(values[:count], 0.05, 30.0)
+        if fixed_speeds is not None:
+            speeds = fixed_speeds
+        elif history_speeds is not None:
+            residual = np.clip(values[:count], -maximum_speed_residual_mps, maximum_speed_residual_mps)
+            speeds = np.clip(history_speeds + residual, 0.05, 30.0)
+        else:
+            speeds = np.clip(values[:count], 0.05, 30.0)
         curvature = np.clip(values if fixed_speeds is not None else values[count:], -0.35, 0.35)
         trajectory = integrate_piecewise_controls(
             future_times_s, speeds_mps=speeds, curvatures_1pm=curvature
         )
-        return _objective(
+        energy = _objective(
             trajectory, observed, weights, pixel_xy, camera_to_ego, intrinsics,
             image_size, depths_m, minimum_flow_scale_px, road_masks,
             road_prior_weight, road_half_width_m, road_lateral_samples,
@@ -400,6 +468,15 @@ def _fit_once(
             future_times_s,
             adaptive_plane_params,
         )[0]
+        if history_speeds is not None:
+            energy += _longitudinal_residual_penalty(
+                speeds,
+                history_speeds,
+                maximum_residual_mps=maximum_speed_residual_mps,
+                residual_weight=speed_residual_weight,
+                residual_smoothness_weight=speed_residual_smoothness_weight,
+            )
+        return float(energy)
 
     best = evaluate(params)
     for _ in range(int(max_iterations)):
@@ -415,9 +492,19 @@ def _fit_once(
         steps *= 0.55
         if not improved and float(np.max(steps)) < 1e-3:
             break
+    if fixed_speeds is not None:
+        final_speeds = fixed_speeds
+    elif history_speeds is not None:
+        final_speeds = np.clip(
+            history_speeds + np.clip(params[:count], -maximum_speed_residual_mps, maximum_speed_residual_mps),
+            0.05,
+            30.0,
+        )
+    else:
+        final_speeds = np.clip(params[:count], 0.05, 30.0)
     trajectory = integrate_piecewise_controls(
         future_times_s,
-        speeds_mps=fixed_speeds if fixed_speeds is not None else np.clip(params[:count], 0.05, 30.0),
+        speeds_mps=final_speeds,
         curvatures_1pm=np.clip(params if fixed_speeds is not None else params[count:], -0.35, 0.35),
     )
     return trajectory, float(best)
@@ -443,6 +530,11 @@ def decode_continuous_trajectory(
     speed_uncertainty_thresholds: tuple[float, float] = (0.25, 0.55),
     curvature_multistart: bool = False,
     fixed_speeds_mps: np.ndarray | None = None,
+    history_speeds_mps: np.ndarray | None = None,
+    history_initial_speed_mps: float | None = None,
+    maximum_speed_residual_mps: float = 3.0,
+    speed_residual_weight: float = 0.02,
+    speed_residual_smoothness_weight: float = 0.05,
     initial_curvatures_1pm: np.ndarray | None = None,
     road_masks: np.ndarray | None = None,
     road_prior_weight: float = 0.0,
@@ -486,6 +578,10 @@ def decode_continuous_trajectory(
         lateral_acceleration_weight,
     ) < 0.0:
         raise ValueError("smoothness weights must be non-negative")
+    if maximum_speed_residual_mps <= 0.0 or not np.isfinite(maximum_speed_residual_mps):
+        raise ValueError("maximum_speed_residual_mps must be finite and positive")
+    if min(speed_residual_weight, speed_residual_smoothness_weight) < 0.0:
+        raise ValueError("speed residual weights must be non-negative")
     if interval_observability is None:
         interval_quality = np.mean(weights > 0.0, axis=(1, 2)).astype(np.float64)
     else:
@@ -504,7 +600,20 @@ def decode_continuous_trajectory(
         fixed_speeds.shape != np.asarray(future_times_s).shape or not np.all(np.isfinite(fixed_speeds))
     ):
         raise ValueError("fixed_speeds_mps must be a finite vector matching future_times_s")
-    starts = (float(np.mean(fixed_speeds)),) if fixed_speeds is not None else tuple(float(value) for value in initial_speeds_mps)
+    history_speeds = None if history_speeds_mps is None else np.asarray(history_speeds_mps, dtype=np.float64)
+    if history_speeds is not None and (
+        history_speeds.shape != np.asarray(future_times_s).shape or not np.all(np.isfinite(history_speeds))
+    ):
+        raise ValueError("history_speeds_mps must be a finite vector matching future_times_s")
+    if fixed_speeds is not None and history_speeds is not None:
+        raise ValueError("fixed speeds and history-anchored residual mode are mutually exclusive")
+    starts = (
+        (float(np.mean(fixed_speeds)),)
+        if fixed_speeds is not None
+        else (float(np.mean(history_speeds)),)
+        if history_speeds is not None
+        else tuple(float(value) for value in initial_speeds_mps)
+    )
     supplied_curvatures = None if initial_curvatures_1pm is None else np.asarray(initial_curvatures_1pm, dtype=np.float64)
     if supplied_curvatures is not None and (
         supplied_curvatures.shape != np.asarray(future_times_s).shape or not np.all(np.isfinite(supplied_curvatures))
@@ -532,6 +641,11 @@ def decode_continuous_trajectory(
                 initial_speed_mps=initial_speed,
                 initial_curvatures_1pm=initial_curvatures,
                 fixed_speeds_mps=fixed_speeds,
+                history_speeds_mps=history_speeds,
+                history_initial_speed_mps=history_initial_speed_mps,
+                maximum_speed_residual_mps=maximum_speed_residual_mps,
+                speed_residual_weight=speed_residual_weight,
+                speed_residual_smoothness_weight=speed_residual_smoothness_weight,
                 max_iterations=max_iterations,
                 road_masks=road_masks,
                 road_prior_weight=road_prior_weight,
@@ -562,9 +676,23 @@ def decode_continuous_trajectory(
     profile = []
     for speed_delta in (-profile_radius, 0.0, profile_radius):
         for curvature_delta in (-profile_radius, 0.0, profile_radius):
+            if history_speeds is None:
+                candidate_speeds = np.clip(speeds * (1.0 + speed_delta), 0.05, 30.0)
+            else:
+                residual = speeds - history_speeds
+                candidate_speeds = np.clip(
+                    history_speeds
+                    + np.clip(
+                        residual + speed_delta * max(float(maximum_speed_residual_mps), 1.0),
+                        -maximum_speed_residual_mps,
+                        maximum_speed_residual_mps,
+                    ),
+                    0.05,
+                    30.0,
+                )
             candidate = integrate_piecewise_controls(
                 np.asarray(future_times_s),
-                speeds_mps=np.clip(speeds * (1.0 + speed_delta), 0.05, 30.0),
+                speeds_mps=candidate_speeds,
                 curvatures_1pm=np.clip(curvatures + curvature_delta * 0.1, -0.35, 0.35),
             )
             energy, _, _ = _objective(
@@ -577,6 +705,14 @@ def decode_continuous_trajectory(
                 np.asarray(future_times_s, dtype=np.float64),
                 adaptive_plane_params,
             )
+            if history_speeds is not None:
+                energy += _longitudinal_residual_penalty(
+                    candidate_speeds,
+                    history_speeds,
+                    maximum_residual_mps=maximum_speed_residual_mps,
+                    residual_weight=speed_residual_weight,
+                    residual_smoothness_weight=speed_residual_smoothness_weight,
+                )
             profile.append((candidate, energy))
     profile.sort(key=lambda item: item[1])
     selected = [item for item in profile if item[1] <= best_energy + max(0.05, 0.5 * best_energy)]
@@ -642,6 +778,11 @@ def decode_continuous_trajectory(
         "profile_count": len(selected),
         "speed_support": speed_support,
         "speed_status_by_interval": [item["status"] for item in speed_support],
+        "history_speed_profile_mps": None if history_speeds is None else history_speeds.tolist(),
+        "history_initial_speed_mps": (
+            None if history_speeds is None else float(history_initial_speed_mps)
+        ),
+        "speed_residual_mps": None if history_speeds is None else (speeds - history_speeds).tolist(),
         "speed_scored": False,
         "sampled_points": int(len(pixel_xy)),
         "effective_weight": float(sampled_weights.sum()),
@@ -654,6 +795,10 @@ def decode_continuous_trajectory(
             "speed_uncertainty_thresholds": [float(low_speed_quality), float(uncertain_speed_quality)],
             "curvature_multistart": bool(curvature_multistart),
             "fixed_speed_shape_refinement": bool(fixed_speeds is not None),
+            "history_anchored_speed_residual": bool(history_speeds is not None),
+            "maximum_speed_residual_mps": float(maximum_speed_residual_mps),
+            "speed_residual_weight": float(speed_residual_weight),
+            "speed_residual_smoothness_weight": float(speed_residual_smoothness_weight),
             "road_prior_enabled": bool(road_masks is not None and road_prior_weight > 0.0),
             "road_prior_weight": float(road_prior_weight),
             "road_half_width_m": float(road_half_width_m),

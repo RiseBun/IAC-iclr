@@ -3,6 +3,7 @@ import unittest
 import numpy as np
 
 from iac_new.trajectory_decode import (
+    _longitudinal_residual_penalty,
     _road_prior_penalty,
     _kinematic_smoothness_penalty,
     compare_continuous_trajectory,
@@ -12,6 +13,56 @@ from iac_new.trajectory_decode import (
 
 
 class TrajectoryDecodeTest(unittest.TestCase):
+    def test_longitudinal_residual_penalty_is_zero_at_history_null(self) -> None:
+        history = np.asarray([4.0, 4.2, 4.4, 4.6])
+        self.assertAlmostEqual(
+            _longitudinal_residual_penalty(
+                history,
+                history,
+                maximum_residual_mps=3.0,
+                residual_weight=0.02,
+                residual_smoothness_weight=0.05,
+            ),
+            0.0,
+        )
+        changed = _longitudinal_residual_penalty(
+            history + np.asarray([0.0, 0.2, 0.6, 1.0]),
+            history,
+            maximum_residual_mps=3.0,
+            residual_weight=0.02,
+            residual_smoothness_weight=0.05,
+        )
+        self.assertGreater(changed, 0.0)
+
+    def test_history_anchored_decoder_bounds_speed_residual(self) -> None:
+        times = np.asarray([0.5, 1.0], dtype=np.float64)
+        history_speeds = np.asarray([4.0, 4.5], dtype=np.float64)
+        observed = np.zeros((2, 24, 32, 2), dtype=np.float32)
+        observed[..., 0] = -2.0
+        camera_to_ego = np.eye(4, dtype=np.float64)
+        camera_to_ego[:3, :3] = np.asarray(
+            [[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]]
+        )
+        camera_to_ego[:3, 3] = [0.0, 0.0, 1.5]
+        intrinsics = np.asarray(
+            [[30.0, 0.0, 16.0], [0.0, 30.0, 12.0], [0.0, 0.0, 1.0]]
+        )
+        result = decode_continuous_trajectory(
+            observed_flows=observed,
+            camera_to_ego=camera_to_ego,
+            intrinsics=intrinsics,
+            future_times_s=times,
+            roi_mask=np.ones((24, 32), dtype=bool),
+            max_points=64,
+            max_iterations=2,
+            history_speeds_mps=history_speeds,
+            history_initial_speed_mps=4.0,
+            maximum_speed_residual_mps=0.5,
+        )
+        predicted = np.asarray([item["q50"] for item in result["speed_support"]])
+        self.assertTrue(np.all(np.abs(predicted - history_speeds) <= 0.5 + 1e-6))
+        self.assertTrue(result["decoder_parameters"]["history_anchored_speed_residual"])
+
     def test_kinematic_smoothness_penalty_prefers_constant_controls(self) -> None:
         times = np.asarray([0.5, 1.0, 1.5, 2.0], dtype=np.float64)
         smooth = integrate_piecewise_controls(

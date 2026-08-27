@@ -5,6 +5,7 @@ import numpy as np
 from iac_new.continuous_motion import (
     compare_future_control,
     compare_history_baseline,
+    compare_longitudinal_behavior,
     compare_counterfactual_motion_deltas,
     compare_motion_profiles,
     foresight_gain,
@@ -176,6 +177,16 @@ class ContinuousMotionTest(unittest.TestCase):
         fit = fit_longitudinal_gain([record])
         self.assertAlmostEqual(fit["longitudinal_gain"], 0.5)
         self.assertAlmostEqual(fit["weighted_residual_mae_mps"], 0.0)
+
+    def test_longitudinal_behavior_scores_change_direction(self) -> None:
+        times = [0.5, 1.0, 1.5, 2.0]
+        predicted = image_motion_profile(decoder([3.9, 3.5, 3.0, 2.6]), times, initial_speed_mps=4.0)
+        action = trajectory_to_motion_profile(
+            decoder([3.8, 3.4, 3.1, 2.5])["trajectory"], times, initial_speed_mps=4.0
+        )
+        result = compare_longitudinal_behavior(predicted, action, predicted)
+        self.assertGreaterEqual(result["change_direction_accuracy"], 0.75)
+        self.assertGreater(result["significant_change_direction_accuracy"], 0.5)
 
     def test_future_control_uses_target_observability_mask(self) -> None:
         times = [0.5, 1.0, 1.5, 2.0]

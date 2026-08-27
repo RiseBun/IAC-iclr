@@ -30,6 +30,11 @@ reduces raw RAFT speed error substantially, but its scene-disjoint test result
 does not beat the strong history-only null. It is retained as a falsified,
 reproducible baseline rather than reported as a successful metric.
 
+The current [optimizer-internal longitudinal residual V4](docs/LEVEL1_LONGITUDINAL_OPTIMIZER_V4_ZH.md)
+keeps speed as an evaluation-sufficient behavioral signal. It is stable on the
+78-sample run, but the manifest is still 4 future frames/2 seconds and the
+longitudinal incremental gate is not resolved; no causal success claim is made.
+
 ![Converged IAC continuous foresight-action architecture](docs/figures/continuous_foresight_alignment_v1.svg)
 
 The Level 1 longitudinal branch and its fail-closed next-step boundary are shown in

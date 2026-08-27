@@ -21,6 +21,7 @@ from iac_new.road_relative import road_relative_posterior
 from iac_new.road_structure import build_road_structure, extract_road_boundaries, boundary_pixels_to_ego, fuse_ego_boundary_keypoints
 from iac_new.scoring import interval_observability, polygon_mask
 from iac_new.trajectory_decode import compare_continuous_trajectory, decode_continuous_trajectory
+from iac_new.continuous_motion import history_only_motion_profile
 from iac_new.temporal_geometry import RoadStateFilter, TemporalScaleCalibrator, fit_causal_road_plane
 from iac_new.temporal_geometry import HomographyBoundaryPropagator
 from iac_new.flow_reliability import FlowReliabilityFusion, calibrate_historical_flow_bias, calibrate_historical_row_bias
@@ -321,11 +322,22 @@ def evaluate_record(record: dict[str, Any], extractor: RaftFlowExtractor, config
     )
     quality_vector = np.asarray([item["effective_static_pixel_fraction"] for item in interval_quality], dtype=np.float64)
     history_speed_prior = None
+    history_speed_curve = None
     history_state = record.get("metadata", {}).get("history_ego_state")
     if bool(decoder_cfg.get("use_history_speed_prior", True)) and history_state is not None:
         history_array = np.asarray(history_state, dtype=np.float64)
         if history_array.ndim == 2 and history_array.shape[0] > 0 and history_array.shape[1] >= 4 and np.isfinite(history_array[-1, 3]):
             history_speed_prior = float(max(history_array[-1, 3], 0.2))
+            if bool(decoder_cfg.get("history_anchored_speed_residual", False)):
+                history_profile = history_only_motion_profile(
+                    history_array,
+                    record["future_times_s"],
+                    history_times_s=record["history_times_s"],
+                    model="constant_acceleration_yaw_rate",
+                )
+                history_speed_curve = np.asarray(
+                    [row["speed_mps"] for row in history_profile["rows"]], dtype=np.float64
+                )
     initial_speeds = tuple(float(v) for v in decoder_cfg.get("initial_speeds_mps", [3.0, 6.0, 10.0]))
     if history_speed_prior is not None:
         spread = float(decoder_cfg.get("history_speed_prior_spread", 0.35))
@@ -344,6 +356,13 @@ def evaluate_record(record: dict[str, Any], extractor: RaftFlowExtractor, config
         max_points=int(decoder_cfg.get("max_points", 900)),
         max_iterations=int(decoder_cfg.get("max_iterations", 12)),
         initial_speeds_mps=initial_speeds,
+        history_speeds_mps=history_speed_curve,
+        history_initial_speed_mps=(history_speed_prior if history_speed_curve is not None else None),
+        maximum_speed_residual_mps=float(decoder_cfg.get("maximum_speed_residual_mps", 3.0)),
+        speed_residual_weight=float(decoder_cfg.get("speed_residual_weight", 0.02)),
+        speed_residual_smoothness_weight=float(
+            decoder_cfg.get("speed_residual_smoothness_weight", 0.05)
+        ),
         profile_radius=float(decoder_cfg.get("profile_radius", 0.12)),
         interval_observability=quality_vector,
         speed_uncertainty_thresholds=(

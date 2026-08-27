@@ -15,6 +15,7 @@ from iac_new.continuous_motion import (
     MOTION_FIELDS,
     compare_future_control,
     compare_history_baseline,
+    compare_longitudinal_behavior,
     compare_motion_profiles,
     foresight_gain,
     history_anchored_residual_motion_profile,
@@ -149,7 +150,10 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
             and len(other["future_times_s"]) == len(record["future_times_s"])
         ]
         target_speed = float(record["history_motion_profile"]["history_anchor"]["speed_mps"])
-        if record["image_motion_profile"].get("source") == "history_anchored_image_residual_decoder":
+        if record["image_motion_profile"].get("source") in {
+            "history_anchored_image_residual_decoder",
+            "history_anchored_optimizer_residual_decoder",
+        }:
             reversed_profile = reanchor_longitudinal_control_profile(
                 record["image_motion_profile"],
                 record["history_motion_profile"],
@@ -161,6 +165,12 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
                 record["image_motion_profile"], record["future_times_s"], reverse=True
             )
         reversed_result = compare_future_control(
+            reversed_profile,
+            record["reference_motion_profile"],
+            record["image_motion_profile"],
+            include_uncertain=include_uncertain,
+        )
+        reversed_behavior = compare_longitudinal_behavior(
             reversed_profile,
             record["reference_motion_profile"],
             record["image_motion_profile"],
@@ -182,7 +192,10 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
                 float(donor["history_motion_profile"]["history_anchor"]["speed_mps"]) - target_speed
             )
             if speed_gap <= 0.5:
-                if donor["image_motion_profile"].get("source") == "history_anchored_image_residual_decoder":
+                if donor["image_motion_profile"].get("source") in {
+                    "history_anchored_image_residual_decoder",
+                    "history_anchored_optimizer_residual_decoder",
+                }:
                     shuffled_profile = reanchor_longitudinal_control_profile(
                         donor["image_motion_profile"],
                         record["history_motion_profile"],
@@ -204,6 +217,12 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
                     "history_speed_gap_mps": speed_gap,
                     "comparison": shuffled,
                     "lift": _gain(shuffled, record["comparison"]),
+                    "longitudinal_behavior": compare_longitudinal_behavior(
+                        shuffled_profile,
+                        record["reference_motion_profile"],
+                        record["image_motion_profile"],
+                        include_uncertain=include_uncertain,
+                    ),
                 }
         record["specificity_controls"] = {
             "status": "ok",
@@ -212,6 +231,7 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
                 "status": "ok",
                 "comparison": reversed_result,
                 "lift": _gain(reversed_result, record["comparison"]),
+                "longitudinal_behavior": reversed_behavior,
             },
         }
 
@@ -285,6 +305,48 @@ def _incremental_evidence(valid: list[dict[str, Any]]) -> dict[str, Any]:
             "criterion": "lower bound of paired sample bootstrap 95% CI must exceed zero",
         }
     output["component_status"] = component_status
+    behavior_pairs = {
+        "history": [
+            (
+                float(record["history_longitudinal_behavior"]["delta_speed_mae_mps"])
+                - float(record["longitudinal_behavior"]["delta_speed_mae_mps"]),
+                float(record["longitudinal_behavior"]["change_direction_accuracy"])
+                - float(record["history_longitudinal_behavior"]["change_direction_accuracy"]),
+            )
+            for record in valid
+            if record.get("history_longitudinal_behavior", {}).get("status") == "ok"
+            and record.get("longitudinal_behavior", {}).get("status") == "ok"
+        ],
+        "matched_shuffle": [
+            (
+                float(record["specificity_controls"]["matched_shuffle"]["longitudinal_behavior"]["delta_speed_mae_mps"])
+                - float(record["longitudinal_behavior"]["delta_speed_mae_mps"]),
+                float(record["longitudinal_behavior"]["change_direction_accuracy"])
+                - float(record["specificity_controls"]["matched_shuffle"]["longitudinal_behavior"]["change_direction_accuracy"]),
+            )
+            for record in valid
+            if record.get("specificity_controls", {}).get("matched_shuffle", {}).get("status") == "ok"
+            and record["specificity_controls"]["matched_shuffle"].get("longitudinal_behavior", {}).get("status") == "ok"
+        ],
+        "time_reversed": [
+            (
+                float(record["specificity_controls"]["time_reversed"]["longitudinal_behavior"]["delta_speed_mae_mps"])
+                - float(record["longitudinal_behavior"]["delta_speed_mae_mps"]),
+                float(record["longitudinal_behavior"]["change_direction_accuracy"])
+                - float(record["specificity_controls"]["time_reversed"]["longitudinal_behavior"]["change_direction_accuracy"]),
+            )
+            for record in valid
+            if record.get("specificity_controls", {}).get("time_reversed", {}).get("status") == "ok"
+            and record["specificity_controls"]["time_reversed"].get("longitudinal_behavior", {}).get("status") == "ok"
+        ],
+    }
+    behavior_evidence = {}
+    for name, pairs in behavior_pairs.items():
+        behavior_evidence[name] = {
+            "delta_speed_error_reduction": _mean_ci([pair[0] for pair in pairs], rng),
+            "change_direction_accuracy_lift": _mean_ci([pair[1] for pair in pairs], rng),
+        }
+    output["longitudinal_behavior_incremental_evidence"] = behavior_evidence
     return output
 
 
@@ -384,6 +446,30 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
             "sample_mean_mae": None if not values else float(np.mean(values)),
             "samples": len(values),
         }
+    behavior_rows = [record.get("longitudinal_behavior") for record in valid if record.get("longitudinal_behavior")]
+    behavior = {
+        "delta_speed_mae_mps": None if not behavior_rows else float(np.mean([row["delta_speed_mae_mps"] for row in behavior_rows])),
+        "change_direction_accuracy": None if not behavior_rows else float(np.mean([row["change_direction_accuracy"] for row in behavior_rows])),
+        "significant_change_direction_accuracy": None if not behavior_rows else float(np.mean([
+            row["significant_change_direction_accuracy"] for row in behavior_rows
+            if row["significant_change_direction_accuracy"] is not None
+        ])),
+        "samples": len(behavior_rows),
+        "change_deadband_mps": None if not behavior_rows else float(behavior_rows[0]["change_deadband_mps"]),
+    }
+    behavior["capability_gate"] = {
+        "delta_speed_mae_at_most_0p5_mps": (
+            behavior["delta_speed_mae_mps"] is not None and behavior["delta_speed_mae_mps"] <= 0.5
+        ),
+        "change_direction_accuracy_at_least_0p70": (
+            behavior["change_direction_accuracy"] is not None and behavior["change_direction_accuracy"] >= 0.70
+        ),
+        "mean_interval_coverage_at_least_0p50": (
+            bool(valid) and float(np.mean([record["comparison"]["coverage"] for record in valid])) >= 0.50
+        ),
+    }
+    behavior["capability_sufficient_for_level1_probe"] = all(behavior["capability_gate"].values())
+    behavior["capability_gate_status"] = "provisional_proxy_thresholds_not_causal_evidence"
     longitudinal_models = {
         str(record.get("image_motion_profile", {}).get("longitudinal_model", {}).get("protocol"))
         for record in valid
@@ -391,7 +477,9 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
     }
     return {
         "protocol": (
-            "continuous-foresight-action-level1-longitudinal-v3"
+            "continuous-foresight-action-level1-optimizer-residual-v4"
+            if "optimizer-internal-longitudinal-residual-v1" in longitudinal_models
+            else "continuous-foresight-action-level1-longitudinal-v3"
             if longitudinal_models
             else "continuous-foresight-action-level1-v2"
         ),
@@ -414,6 +502,7 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
         "mean_interval_coverage": None if not valid else float(np.mean([record["comparison"]["coverage"] for record in valid])),
         "metrics": metrics,
         "raw_absolute_image_metrics": raw_metrics,
+        "longitudinal_behavior": behavior,
         "longitudinal_model_protocols": sorted(longitudinal_models),
         "metric_families": [
             "continuous_alignment",
@@ -525,6 +614,18 @@ def main() -> None:
         raw_comparison = compare_motion_profiles(
             raw_imagined, reference, include_uncertain=args.include_uncertain
         )
+        longitudinal_behavior = compare_longitudinal_behavior(
+            imagined,
+            reference,
+            imagined,
+            include_uncertain=args.include_uncertain,
+        )
+        history_longitudinal_behavior = compare_longitudinal_behavior(
+            history_profile,
+            reference,
+            imagined,
+            include_uncertain=args.include_uncertain,
+        )
         history_comparison = compare_history_baseline(
             history_profile,
             reference,
@@ -560,6 +661,8 @@ def main() -> None:
             "reference_motion_profile": reference,
             "comparison": comparison,
             "raw_image_comparison": raw_comparison,
+            "longitudinal_behavior": longitudinal_behavior,
+            "history_longitudinal_behavior": history_longitudinal_behavior,
             "history_baseline_comparison": history_comparison,
             "foresight_gain": foresight_gain(comparison, history_comparison),
         })

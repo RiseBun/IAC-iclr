@@ -23,6 +23,7 @@ MOTION_FIELDS = (
 IMAGE_PROFILE_SOURCES = {
     "image_only_candidate_blind_decoder",
     "history_anchored_image_residual_decoder",
+    "history_anchored_optimizer_residual_decoder",
 }
 
 
@@ -191,7 +192,31 @@ def image_motion_profile(
         }
         row["observability"] = float(np.clip(support.get("observability", 0.0), 0.0, 1.0))
         row["status"] = str(support.get("status", "abstain"))
-    profile["source"] = "image_only_candidate_blind_decoder"
+    residual_mode = bool(
+        (decoder.get("decoder_parameters") or {}).get("history_anchored_speed_residual")
+    )
+    if residual_mode:
+        history_speeds = list(decoder.get("history_speed_profile_mps") or [])
+        residuals = [
+            float(row["speed_mps"]) - float(history_speed)
+            for row, history_speed in zip(profile["rows"], history_speeds)
+        ]
+        if len(history_speeds) != len(profile["rows"]):
+            raise ValueError("history-anchored decoder must export matching speed residuals")
+        profile["source"] = "history_anchored_optimizer_residual_decoder"
+        history_initial_speed = decoder.get("history_initial_speed_mps")
+        if history_initial_speed is None or not np.isfinite(history_initial_speed):
+            raise ValueError("history-anchored decoder must export initial history speed")
+        profile["initial_speed_mps"] = float(history_initial_speed)
+        profile["longitudinal_model"] = {
+            "protocol": "optimizer-internal-longitudinal-residual-v1",
+            "history_speed_profile_mps": [float(value) for value in history_speeds],
+            "speed_residual_mps": [float(value) for value in residuals],
+            "absolute_image_speed_used": False,
+            "action_waypoint_visible_to_predictor": False,
+        }
+    else:
+        profile["source"] = "image_only_candidate_blind_decoder"
     profile["candidate_bank_used"] = False
     return profile
 
@@ -331,7 +356,10 @@ def reanchor_longitudinal_control_profile(
     reverse: bool = False,
 ) -> dict[str, Any]:
     """Transfer only a future image residual onto the recipient history null."""
-    if source_profile.get("source") != "history_anchored_image_residual_decoder":
+    if source_profile.get("source") not in {
+        "history_anchored_image_residual_decoder",
+        "history_anchored_optimizer_residual_decoder",
+    }:
         raise ValueError("source_profile must use the longitudinal residual protocol")
     times = np.asarray(target_times_s, dtype=np.float64)
     source_rows = list(source_profile.get("rows") or [])
@@ -345,6 +373,35 @@ def reanchor_longitudinal_control_profile(
     selected_rows = list(reversed(source_rows)) if reverse else source_rows
     result["rows"] = [{key: value for key, value in row.items()} for row in selected_rows]
     model = dict(source_profile["longitudinal_model"])
+    if source_profile.get("source") == "history_anchored_optimizer_residual_decoder":
+        source_residuals = list(model.get("speed_residual_mps") or [])
+        if len(source_residuals) != len(times):
+            raise ValueError("optimizer residual profile must provide matching residuals")
+        if reverse:
+            source_residuals.reverse()
+        target_anchor = float(target_history_profile["history_anchor"]["speed_mps"])
+        previous_time = 0.0
+        previous_speed = target_anchor
+        target_history_speeds = []
+        for row, history_row, residual, time_s in zip(
+            result["rows"], history_rows, source_residuals, times
+        ):
+            speed = max(float(history_row["speed_mps"]) + float(residual), 0.0)
+            dt = float(time_s - previous_time)
+            row["time_s"] = float(time_s)
+            row["dt_s"] = dt
+            row["speed_mps"] = speed
+            row["longitudinal_speed_mps"] = speed
+            row["acceleration_mps2"] = (speed - previous_speed) / dt
+            target_history_speeds.append(float(history_row["speed_mps"]))
+            previous_time = float(time_s)
+            previous_speed = speed
+        model["history_speed_profile_mps"] = target_history_speeds
+        model["speed_residual_mps"] = [float(value) for value in source_residuals]
+        model["control_reanchored"] = True
+        model["control_signal_reversed"] = bool(reverse)
+        result["longitudinal_model"] = model
+        return result
     gain = float(model["longitudinal_gain"])
     radius = float(model["speed_interval_radius_mps"])
     target_anchor = float(target_history_profile["history_anchor"]["speed_mps"])
@@ -651,6 +708,82 @@ def foresight_gain(
         "positive_means_future_adds_information": True,
         "coverage": image_comparison.get("coverage"),
         "metrics": metrics,
+    }
+
+
+def compare_longitudinal_behavior(
+    predicted_profile: dict[str, Any],
+    action_profile: dict[str, Any],
+    eligibility_profile: dict[str, Any],
+    *,
+    change_deadband_mps: float = 0.15,
+    include_uncertain: bool = False,
+) -> dict[str, Any]:
+    """Compare longitudinal change, rather than absolute speed.
+
+    This is the Level 1 behavior signal: a predictor is useful when it gets the
+    direction and magnitude of future speed change right, even if monocular
+    scale prevents accurate absolute speed recovery.
+    """
+    if change_deadband_mps < 0.0 or not np.isfinite(change_deadband_mps):
+        raise ValueError("change_deadband_mps must be finite and non-negative")
+    predicted_rows = list(predicted_profile.get("rows") or [])
+    action_rows = list(action_profile.get("rows") or [])
+    gate_rows = list(eligibility_profile.get("rows") or [])
+    if not predicted_rows or len(predicted_rows) != len(action_rows) or len(predicted_rows) != len(gate_rows):
+        raise ValueError("longitudinal profiles must have matching non-empty rows")
+    allowed = {"usable", "uncertain"} if include_uncertain else {"usable"}
+    predicted_anchor = predicted_profile.get("initial_speed_mps")
+    action_anchor = action_profile.get("initial_speed_mps")
+    if predicted_anchor is None:
+        predicted_anchor = predicted_rows[0].get("speed_mps")
+    if action_anchor is None:
+        action_anchor = action_rows[0].get("speed_mps")
+    if not _finite_pair(predicted_anchor, action_anchor):
+        raise ValueError("profiles must provide finite initial speeds")
+    delta_errors = []
+    direction_matches = []
+    significant_matches = []
+    predicted_signs = []
+    action_signs = []
+    for predicted, action, gate in zip(predicted_rows, action_rows, gate_rows):
+        if gate.get("status") not in allowed:
+            continue
+        predicted_delta = float(predicted["speed_mps"]) - float(predicted_anchor)
+        action_delta = float(action["speed_mps"]) - float(action_anchor)
+        delta_errors.append(abs(predicted_delta - action_delta))
+        def sign(value: float) -> int:
+            return 1 if value > change_deadband_mps else -1 if value < -change_deadband_mps else 0
+        predicted_sign = sign(predicted_delta)
+        action_sign = sign(action_delta)
+        predicted_signs.append(predicted_sign)
+        action_signs.append(action_sign)
+        direction_matches.append(float(predicted_sign == action_sign))
+        if action_sign != 0:
+            significant_matches.append(float(predicted_sign == action_sign))
+    if not delta_errors:
+        return {
+            "status": "abstain",
+            "evaluable_intervals": 0,
+            "delta_speed_mae_mps": None,
+            "change_direction_accuracy": None,
+            "significant_change_direction_accuracy": None,
+            "predicted_accel_fraction": None,
+            "action_accel_fraction": None,
+        }
+    return {
+        "status": "ok",
+        "evaluable_intervals": len(delta_errors),
+        "change_deadband_mps": float(change_deadband_mps),
+        "delta_speed_mae_mps": float(np.mean(delta_errors)),
+        "change_direction_accuracy": float(np.mean(direction_matches)),
+        "significant_change_direction_accuracy": (
+            None if not significant_matches else float(np.mean(significant_matches))
+        ),
+        "predicted_accel_fraction": float(np.mean(np.asarray(predicted_signs) > 0)),
+        "action_accel_fraction": float(np.mean(np.asarray(action_signs) > 0)),
+        "predicted_decel_fraction": float(np.mean(np.asarray(predicted_signs) < 0)),
+        "action_decel_fraction": float(np.mean(np.asarray(action_signs) < 0)),
     }
 
 
