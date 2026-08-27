@@ -204,6 +204,23 @@ MAE，也不能单独支撑 WAM 因果结论。
 `0.99793` curve cosine（40 条幅度足够的样本）。这组结果支持将相对进展作为
 Level-1 的连续主证据，但不等价于绝对距离恢复。
 
+### 6.4 Relative Progress 增量门槛
+
+当前 evaluator 已对相对距离单独运行 history/shuffle/reverse 检验。V5 的 paired
+结果为：
+
+| 对照 | lift（control MAE - actual MAE） | 95% CI | 样本数 |
+|---|---:|---:|---:|
+| history-only | 0.0241 | [0.0081, 0.0409] | 38 |
+| matched-shuffle | 0.0167 | [0.0031, 0.0306] | 39 |
+| time-reversal | 2.6602 | [2.1172, 3.2162] | 35 |
+
+三项 CI 下界均大于零，报告中的 `relative_progress_signal_resolved=true`。这证明
+当前样本上相对进展不是单纯的历史匀速复制，也依赖正确的时间顺序。不过运动分层
+仍然不平衡：`lateral_turn=37`、`acceleration=3`，没有足够的 braking/straight
+样本。因此这一步冻结的是**相对进展的测量定义和统计门槛**，不是跨场景泛化结论；
+正式 WAM 评测前必须补齐纵向激励分层。
+
 ### 6.2 V5 历史尺度校正消融
 
 在完全相同的 78 条输入上，仅将 V5 的

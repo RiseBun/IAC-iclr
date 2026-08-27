@@ -645,6 +645,7 @@ def compare_distance_profiles(
     *,
     scale_mode: str = "metric",
     include_uncertain: bool = False,
+    allow_non_image_source: bool = False,
 ) -> dict[str, Any]:
     """Compare forward displacement in metric or relative-shape coordinates.
 
@@ -654,7 +655,7 @@ def compare_distance_profiles(
     displacement and is the Level-1 primary distance shape measure; neither
     mode borrows scale from the action branch.
     """
-    if image_profile.get("source") not in IMAGE_PROFILE_SOURCES:
+    if not allow_non_image_source and image_profile.get("source") not in IMAGE_PROFILE_SOURCES:
         raise ValueError("image_profile must be produced independently from action waypoints")
     if scale_mode not in {"metric", "scale_free", "relative"}:
         raise ValueError("scale_mode must be metric, scale_free, or relative")

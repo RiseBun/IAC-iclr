@@ -107,6 +107,9 @@ For Level-1 distance alignment, `relative` is now the primary mode: each image
 and action profile is independently normalized by its terminal forward progress,
 so the score measures temporal progress shape without requiring absolute metric
 scale. Absolute metric distance remains an uncertainty-labelled diagnostic.
+The 78-sample proxy passes the relative history/shuffle/reversal gates, but its
+motion strata are still imbalanced and do not yet establish cross-scenario WAM
+validity.
 
 For interaction events, an actor-relative extension adds instance association,
 calibrated ground-contact/depth projection, robust temporal fitting, metric

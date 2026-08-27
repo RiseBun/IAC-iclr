@@ -145,6 +145,36 @@ def _gain(control: dict[str, Any], actual: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _distance_gain(control: dict[str, Any], actual: dict[str, Any]) -> dict[str, Any]:
+    control_metric = control.get("metrics", {}).get("forward_displacement_profile", {})
+    actual_metric = actual.get("metrics", {}).get("forward_displacement_profile", {})
+    control_mae = control_metric.get("mae")
+    actual_mae = actual_metric.get("mae")
+    lift = None if control_mae is None or actual_mae is None else float(control_mae - actual_mae)
+    return {
+        "actual_future_mae": actual_mae,
+        "control_future_mae": control_mae,
+        "absolute_lift": lift,
+        "actual_beats_control": None if lift is None else lift > 0.0,
+    }
+
+
+def _relative_distance_stratum(record: dict[str, Any]) -> str:
+    rows = list(record.get("reference_motion_profile", {}).get("rows") or [])
+    if not rows:
+        return "unknown"
+    accelerations = np.asarray([float(row.get("acceleration_mps2", 0.0)) for row in rows], dtype=np.float64)
+    lateral = np.asarray([abs(float(row.get("lateral_speed_mps", 0.0))) for row in rows], dtype=np.float64)
+    yaw = np.asarray([abs(float(row.get("yaw_rate_radps", 0.0))) for row in rows], dtype=np.float64)
+    if float(max(lateral.max(initial=0.0), yaw.max(initial=0.0))) >= 0.08:
+        return "lateral_turn"
+    if float(accelerations.max(initial=0.0)) >= 0.30:
+        return "acceleration"
+    if float(accelerations.min(initial=0.0)) <= -0.30:
+        return "braking"
+    return "straight_cruise"
+
+
 def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain: bool) -> None:
     eligible = [record for record in records if record.get("comparison", {}).get("status") == "ok"]
     for record in eligible:
@@ -179,6 +209,14 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
             record["reference_motion_profile"],
             record["image_motion_profile"],
             include_uncertain=include_uncertain,
+        )
+        actual_relative = record["distance_alignment_relative"]
+        history_relative = compare_distance_profiles(
+            record["history_motion_profile"],
+            record["reference_motion_profile"],
+            scale_mode="relative",
+            include_uncertain=include_uncertain,
+            allow_non_image_source=True,
         )
         matched_shuffle: dict[str, Any] = {
             "status": "unavailable",
@@ -227,6 +265,12 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
                         record["image_motion_profile"],
                         include_uncertain=include_uncertain,
                     ),
+                    "relative_distance": compare_distance_profiles(
+                        shuffled_profile,
+                        record["reference_motion_profile"],
+                        scale_mode="relative",
+                        include_uncertain=include_uncertain,
+                    ),
                 }
         record["specificity_controls"] = {
             "status": "ok",
@@ -236,7 +280,37 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
                 "comparison": reversed_result,
                 "lift": _gain(reversed_result, record["comparison"]),
                 "longitudinal_behavior": reversed_behavior,
+                "relative_distance": compare_distance_profiles(
+                    reversed_profile,
+                    record["reference_motion_profile"],
+                    scale_mode="relative",
+                    include_uncertain=include_uncertain,
+                ),
             },
+        }
+        record["relative_distance_controls"] = {
+            "status": "ok",
+            "actual": actual_relative,
+            "history": {
+                "comparison": history_relative,
+                "lift": _distance_gain(history_relative, actual_relative),
+            },
+            "matched_shuffle": {
+                "comparison": matched_shuffle.get("relative_distance"),
+                "lift": (
+                    None
+                    if matched_shuffle.get("relative_distance") is None
+                    else _distance_gain(matched_shuffle["relative_distance"], actual_relative)
+                ),
+            },
+            "time_reversed": {
+                "comparison": record["specificity_controls"]["time_reversed"]["relative_distance"],
+                "lift": _distance_gain(
+                    record["specificity_controls"]["time_reversed"]["relative_distance"],
+                    actual_relative,
+                ),
+            },
+            "stratum": _relative_distance_stratum(record),
         }
 
 
@@ -309,6 +383,60 @@ def _incremental_evidence(valid: list[dict[str, Any]]) -> dict[str, Any]:
             "criterion": "lower bound of paired sample bootstrap 95% CI must exceed zero",
         }
     output["component_status"] = component_status
+    relative_controls = {
+        "history": [],
+        "matched_shuffle": [],
+        "time_reversed": [],
+    }
+    for record in valid:
+        controls = record.get("relative_distance_controls", {})
+        for name in relative_controls:
+            lift = controls.get(name, {}).get("lift") or {}
+            value = lift.get("absolute_lift")
+            if value is not None and np.isfinite(value):
+                relative_controls[name].append(float(value))
+    relative_evidence = {}
+    for name, values in relative_controls.items():
+        relative_evidence[name] = _mean_ci(values, rng) | {
+            "positive_fraction": None if not values else float(np.mean(np.asarray(values) > 0.0)),
+            "definition": "control_relative_progress_mae_minus_actual_relative_progress_mae",
+        }
+    relative_evidence["gate"] = {
+        "history": bool(
+            relative_evidence["history"]["confidence_interval_95"]
+            and relative_evidence["history"]["confidence_interval_95"][0] > 0.0
+        ),
+        "matched_shuffle": bool(
+            relative_evidence["matched_shuffle"]["confidence_interval_95"]
+            and relative_evidence["matched_shuffle"]["confidence_interval_95"][0] > 0.0
+        ),
+        "time_reversed": bool(
+            relative_evidence["time_reversed"]["confidence_interval_95"]
+            and relative_evidence["time_reversed"]["confidence_interval_95"][0] > 0.0
+        ),
+    }
+    relative_evidence["relative_progress_signal_resolved"] = all(relative_evidence["gate"].values())
+    relative_evidence["criterion"] = "lower bound of paired sample bootstrap 95% CI must exceed zero"
+    output["relative_distance_specificity"] = relative_evidence
+    strata: dict[str, dict[str, Any]] = {}
+    for record in valid:
+        controls = record.get("relative_distance_controls", {})
+        actual = controls.get("actual", {}).get("metrics", {}).get("forward_displacement_profile", {})
+        value = actual.get("mae")
+        if value is None or not np.isfinite(value):
+            continue
+        stratum = str(controls.get("stratum", "unknown"))
+        bucket = strata.setdefault(stratum, {"actual_mae": [], "sample_ids": []})
+        bucket["actual_mae"].append(float(value))
+        bucket["sample_ids"].append(record["sample_id"])
+    output["relative_distance_strata"] = {
+        name: {
+            "samples": len(bucket["actual_mae"]),
+            "mean_actual_relative_mae": float(np.mean(bucket["actual_mae"])),
+            "sample_ids": bucket["sample_ids"],
+        }
+        for name, bucket in sorted(strata.items())
+    }
     behavior_pairs = {
         "history": [
             (
@@ -613,6 +741,7 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
             "time_order_specificity",
             "proper_speed_posterior",
             "proper_pose_posterior",
+            "relative_distance_specificity",
             "coverage_risk",
         ],
         "incremental_evidence": _incremental_evidence(valid),
