@@ -3,7 +3,7 @@ import numpy as np
 from iac_new.trajectory_decode import _longitudinal_residual_penalty
 
 
-def test_second_difference_regularizer_penalizes_drift_but_not_constant_residual():
+def test_second_difference_regularizer_preserves_constant_or_linear_residual():
     history = np.zeros(8, dtype=np.float64)
     constant = np.full(8, 0.5, dtype=np.float64)
     drifting = np.arange(8, dtype=np.float64) * 0.05
@@ -24,7 +24,7 @@ def test_second_difference_regularizer_penalizes_drift_but_not_constant_residual
         residual_curvature_weight=1.0,
     )
     assert constant_penalty == 0.0
-    assert drifting_penalty == 0.0
+    assert np.isclose(drifting_penalty, 0.0)
 
 
 def test_second_difference_regularizer_penalizes_curved_residual():
