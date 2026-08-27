@@ -20,6 +20,11 @@ MOTION_FIELDS = (
     "curvature_1pm",
 )
 
+IMAGE_PROFILE_SOURCES = {
+    "image_only_candidate_blind_decoder",
+    "history_anchored_image_residual_decoder",
+}
+
 
 def _trajectory(trajectory: Any, future_times_s: Any) -> tuple[np.ndarray, np.ndarray]:
     points = np.asarray(trajectory, dtype=np.float64)
@@ -191,6 +196,197 @@ def image_motion_profile(
     return profile
 
 
+def longitudinal_residual_features(
+    decoder: dict[str, Any],
+    future_times_s: Any,
+    history_profile: dict[str, Any],
+) -> dict[str, Any]:
+    """Extract action-blind future speed changes relative to the history null.
+
+    Decoder speeds describe intervals, so the trend is fitted at interval
+    midpoints. The absolute image scale is discarded; only the fitted change
+    from t=0 is retained.
+    """
+    if decoder.get("protocol") != "candidate-blind-continuous-trajectory-v1":
+        raise ValueError("decoder must use the candidate-blind continuous protocol")
+    times = np.asarray(future_times_s, dtype=np.float64)
+    rows = list(history_profile.get("rows") or [])
+    support = list(decoder.get("speed_support") or [])
+    if times.ndim != 1 or len(times) < 2 or np.any(np.diff(times) <= 0.0):
+        raise ValueError("at least two increasing future times are required")
+    if len(rows) != len(times) or len(support) != len(times):
+        raise ValueError("history profile and speed support must match future times")
+    anchor = history_profile.get("history_anchor") or {}
+    initial_speed = anchor.get("speed_mps")
+    if initial_speed is None or not np.isfinite(initial_speed):
+        raise ValueError("history profile must provide a finite speed anchor")
+    raw_speed = np.asarray([float(item["q50"]) for item in support], dtype=np.float64)
+    observability = np.asarray(
+        [float(np.clip(item.get("observability", 0.0), 0.0, 1.0)) for item in support],
+        dtype=np.float64,
+    )
+    if not np.all(np.isfinite(raw_speed)):
+        raise ValueError("decoder speed medians must be finite")
+    previous_times = np.concatenate([[0.0], times[:-1]])
+    midpoints = 0.5 * (previous_times + times)
+    design = np.column_stack([np.ones(len(times)), midpoints])
+    root_weight = np.sqrt(np.maximum(observability, 0.05))
+    coefficients = np.linalg.lstsq(design * root_weight[:, None], raw_speed * root_weight, rcond=None)[0]
+    image_slope = float(coefficients[1])
+    raw_scale = float(np.average(np.abs(raw_speed), weights=np.maximum(observability, 0.05)))
+    raw_scale = max(raw_scale, 0.5)
+    relative_slope = image_slope / raw_scale
+    image_delta = float(initial_speed) * relative_slope * midpoints
+    history_speed = np.asarray([float(row["speed_mps"]) for row in rows], dtype=np.float64)
+    history_delta = history_speed - float(initial_speed)
+    innovation = image_delta - history_delta
+    return {
+        "protocol": "longitudinal-residual-feature-v1",
+        "absolute_image_speed_used": False,
+        "action_waypoint_used": False,
+        "initial_speed_mps": float(initial_speed),
+        "image_speed_slope_mps2": image_slope,
+        "raw_image_scale_mps": raw_scale,
+        "relative_image_slope_per_s": relative_slope,
+        "raw_image_intercept_mps": float(coefficients[0]),
+        "rows": [
+            {
+                "time_s": float(time_s),
+                "feature_time_s": float(midpoint),
+                "image_speed_delta_mps": float(image_value),
+                "history_speed_delta_mps": float(history_value),
+                "innovation_mps": float(residual),
+            }
+            for time_s, midpoint, image_value, history_value, residual in zip(
+                times, midpoints, image_delta, history_delta, innovation
+            )
+        ],
+    }
+
+
+def history_anchored_residual_motion_profile(
+    decoder: dict[str, Any],
+    future_times_s: Any,
+    history_profile: dict[str, Any],
+    *,
+    longitudinal_gain: float,
+    speed_interval_radius_mps: float,
+) -> dict[str, Any]:
+    """Add calibrated image speed-change residuals to a frozen history null."""
+    if not np.isfinite(longitudinal_gain):
+        raise ValueError("longitudinal_gain must be finite")
+    if not np.isfinite(speed_interval_radius_mps) or speed_interval_radius_mps <= 0.0:
+        raise ValueError("speed_interval_radius_mps must be finite and positive")
+    features = longitudinal_residual_features(decoder, future_times_s, history_profile)
+    profile = image_motion_profile(
+        decoder,
+        future_times_s,
+        initial_speed_mps=float(features["initial_speed_mps"]),
+    )
+    history_rows = list(history_profile["rows"])
+    feature_rows = list(features["rows"])
+    times = np.asarray(future_times_s, dtype=np.float64)
+    dt = np.diff(np.concatenate([[0.0], times]))
+    predicted_speed = np.asarray([
+        max(
+            float(history_row["speed_mps"])
+            + float(longitudinal_gain) * float(feature_row["innovation_mps"]),
+            0.0,
+        )
+        for history_row, feature_row in zip(history_rows, feature_rows)
+    ])
+    acceleration = np.diff(
+        np.concatenate([[float(features["initial_speed_mps"])], predicted_speed])
+    ) / dt
+    for row, feature_row, speed, accel in zip(
+        profile["rows"], feature_rows, predicted_speed, acceleration
+    ):
+        row["speed_mps"] = float(speed)
+        row["longitudinal_speed_mps"] = float(speed)
+        row["acceleration_mps2"] = float(accel)
+        row["speed_interval_mps"] = {
+            "q05": float(max(0.0, speed - speed_interval_radius_mps)),
+            "q50": float(speed),
+            "q95": float(speed + speed_interval_radius_mps),
+        }
+        row["longitudinal_residual_feature"] = feature_row
+    profile["source"] = "history_anchored_image_residual_decoder"
+    profile["longitudinal_model"] = {
+        "protocol": "history-anchored-longitudinal-residual-v1",
+        "history_profile_source": history_profile.get("source"),
+        "longitudinal_gain": float(longitudinal_gain),
+        "speed_interval_radius_mps": float(speed_interval_radius_mps),
+        "feature": features,
+        "absolute_image_speed_used": False,
+        "action_waypoint_visible_to_predictor": False,
+    }
+    return profile
+
+
+def reanchor_longitudinal_control_profile(
+    source_profile: dict[str, Any],
+    target_history_profile: dict[str, Any],
+    target_times_s: Any,
+    *,
+    reverse: bool = False,
+) -> dict[str, Any]:
+    """Transfer only a future image residual onto the recipient history null."""
+    if source_profile.get("source") != "history_anchored_image_residual_decoder":
+        raise ValueError("source_profile must use the longitudinal residual protocol")
+    times = np.asarray(target_times_s, dtype=np.float64)
+    source_rows = list(source_profile.get("rows") or [])
+    history_rows = list(target_history_profile.get("rows") or [])
+    if len(source_rows) != len(times) or len(history_rows) != len(times):
+        raise ValueError("source, history, and target times must have matching rows")
+    result = {
+        key: value for key, value in source_profile.items()
+        if key not in {"rows", "longitudinal_model"}
+    }
+    selected_rows = list(reversed(source_rows)) if reverse else source_rows
+    result["rows"] = [{key: value for key, value in row.items()} for row in selected_rows]
+    model = dict(source_profile["longitudinal_model"])
+    gain = float(model["longitudinal_gain"])
+    radius = float(model["speed_interval_radius_mps"])
+    target_anchor = float(target_history_profile["history_anchor"]["speed_mps"])
+    previous_time = 0.0
+    previous_speed = target_anchor
+    transferred_features = []
+    for row, history_row, time_s in zip(result["rows"], history_rows, times):
+        source_feature = row["longitudinal_residual_feature"]
+        image_delta = float(source_feature["image_speed_delta_mps"])
+        target_history_delta = float(history_row["speed_mps"]) - target_anchor
+        innovation = image_delta - target_history_delta
+        speed = max(float(history_row["speed_mps"]) + gain * innovation, 0.0)
+        dt = float(time_s - previous_time)
+        feature = {
+            "time_s": float(time_s),
+            "feature_time_s": float(0.5 * (previous_time + time_s)),
+            "image_speed_delta_mps": image_delta,
+            "history_speed_delta_mps": target_history_delta,
+            "innovation_mps": innovation,
+        }
+        row["time_s"] = float(time_s)
+        row["dt_s"] = dt
+        row["speed_mps"] = speed
+        row["longitudinal_speed_mps"] = speed
+        row["acceleration_mps2"] = (speed - previous_speed) / dt
+        row["speed_interval_mps"] = {
+            "q05": max(0.0, speed - radius),
+            "q50": speed,
+            "q95": speed + radius,
+        }
+        row["longitudinal_residual_feature"] = feature
+        transferred_features.append(feature)
+        previous_time = float(time_s)
+        previous_speed = speed
+    model["control_reanchored"] = True
+    model["control_signal_reversed"] = bool(reverse)
+    model["target_history_profile_source"] = target_history_profile.get("source")
+    model["feature"] = dict(model["feature"], rows=transferred_features)
+    result["longitudinal_model"] = model
+    return result
+
+
 def _finite_pair(first: Any, second: Any) -> bool:
     return first is not None and second is not None and np.isfinite(first) and np.isfinite(second)
 
@@ -344,7 +540,7 @@ def compare_motion_profiles(
     tolerances: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Compare image-derived and action-derived motion without text labels."""
-    if image_profile.get("source") != "image_only_candidate_blind_decoder":
+    if image_profile.get("source") not in IMAGE_PROFILE_SOURCES:
         raise ValueError("image_profile must be produced independently from action waypoints")
     result = _compare_profile_rows(
         image_profile,
@@ -378,7 +574,7 @@ def compare_history_baseline(
         "history_only_constant_acceleration_yaw_rate",
     }:
         raise ValueError("history_profile must be the frozen history-only null")
-    if image_profile.get("source") != "image_only_candidate_blind_decoder":
+    if image_profile.get("source") not in IMAGE_PROFILE_SOURCES:
         raise ValueError("image_profile must provide the eligibility mask")
     result = _compare_profile_rows(
         history_profile,
@@ -403,9 +599,9 @@ def compare_future_control(
     tolerances: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Score a corrupted/shuffled future on the target probe's eligible rows."""
-    if control_profile.get("source") != "image_only_candidate_blind_decoder":
+    if control_profile.get("source") not in IMAGE_PROFILE_SOURCES:
         raise ValueError("control_profile must originate from the image-only decoder")
-    if target_image_profile.get("source") != "image_only_candidate_blind_decoder":
+    if target_image_profile.get("source") not in IMAGE_PROFILE_SOURCES:
         raise ValueError("target_image_profile must provide the eligibility mask")
     result = _compare_profile_rows(
         control_profile,
@@ -472,7 +668,7 @@ def compare_counterfactual_motion_deltas(
     if len(lengths) != 1 or not lengths or 0 in lengths:
         raise ValueError("all counterfactual profiles must have matching rows")
     for profile in (clear_image, risk_image):
-        if profile.get("source") != "image_only_candidate_blind_decoder":
+        if profile.get("source") not in IMAGE_PROFILE_SOURCES:
             raise ValueError("counterfactual image profiles must be action-blind")
     thresholds = {
         "speed_mps": 0.25,

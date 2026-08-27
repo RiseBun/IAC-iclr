@@ -9,7 +9,8 @@ flowchart TB
         direction LR
         FI["未来图像"] --> RAFT["RAFT-Large<br/>F/B consistency"]
         RAFT --> GEO["地面自车几何<br/>Observability"]
-        GEO --> MF["<b>m_F(t)</b><br/>v · a · v_lat<br/>yaw-rate · curvature<br/>q05 / q50 / q95"]
+        GEO --> REL["相对纵向趋势<br/>slope / scale<br/>丢弃绝对单目速度"]
+        GEO --> LAT["横向 / yaw / curvature"]
     end
 
     subgraph HISTORY["Strong history-only null · 不读未来"]
@@ -17,6 +18,11 @@ flowchart TB
         HS["历史 state"] --> CA["Constant-acceleration<br/>Constant-yaw-rate"]
         CA --> MH["<b>m_H(t)</b>"]
     end
+
+    REL --> RES["<b>历史锚定纵向残差</b><br/>v = v_H + β(Δv_image − Δv_H)<br/>β 仅在 scene-disjoint fit 学习"]
+    MH --> RES
+    RES --> MF["<b>m_F(t)</b><br/>v · a · v_lat<br/>yaw-rate · curvature<br/>Conformal q05 / q50 / q95"]
+    LAT --> MF
 
     subgraph ACTION["Held-out native action · 解码后才读取"]
         direction LR
@@ -44,7 +50,8 @@ flowchart TB
     PROB --> GATE
     GATE["<b>逐分量 Level 1 门槛</b><br/>Gain、shuffle lift、time-order lift<br/>样本级 bootstrap 95% CI 下界均 > 0<br/>速度后验必须校准"]
 
-    GATE --> REPORT["Level 1 输出<br/>连续对齐 + 增量信息 + specificity + uncertainty<br/>不使用事件标签 · 不声称干预因果"]
+    GATE -->|"全部通过"| REPORT["Level 1 输出<br/>连续对齐 + 增量信息 + specificity + uncertainty<br/>不使用事件标签 · 不声称干预因果"]
+    GATE -->|"纵向未通过"| NEXT["下一能力迭代<br/>在光流重投影优化器内直接优化残差<br/>禁止继续调后处理融合权重"]
 
     classDef input fill:#f4f4f5,stroke:#52525b,color:#18181b,stroke-width:1.5px;
     classDef image fill:#e8f1fb,stroke:#2563a6,color:#102a43,stroke-width:1.5px;
@@ -54,8 +61,8 @@ flowchart TB
     classDef output fill:#fff0f0,stroke:#b83a3a,color:#551919,stroke-width:1.5px;
 
     class INPUT input;
-    class FI,RAFT,GEO,MF,DF image;
+    class FI,RAFT,GEO,REL,LAT,RES,MF,DF image;
     class HS,CA,MH,DH history;
     class AW,KIN,MA action;
     class GAIN,CTRL,DC,LIFT,PROB,GATE primary;
-    class REPORT output;
+    class REPORT,NEXT output;

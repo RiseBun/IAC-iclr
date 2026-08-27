@@ -17,8 +17,10 @@ from iac_new.continuous_motion import (
     compare_history_baseline,
     compare_motion_profiles,
     foresight_gain,
+    history_anchored_residual_motion_profile,
     history_only_motion_profile,
     image_motion_profile,
+    reanchor_longitudinal_control_profile,
     trajectory_to_motion_profile,
 )
 
@@ -147,9 +149,17 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
             and len(other["future_times_s"]) == len(record["future_times_s"])
         ]
         target_speed = float(record["history_motion_profile"]["history_anchor"]["speed_mps"])
-        reversed_profile = _retime_profile(
-            record["image_motion_profile"], record["future_times_s"], reverse=True
-        )
+        if record["image_motion_profile"].get("source") == "history_anchored_image_residual_decoder":
+            reversed_profile = reanchor_longitudinal_control_profile(
+                record["image_motion_profile"],
+                record["history_motion_profile"],
+                record["future_times_s"],
+                reverse=True,
+            )
+        else:
+            reversed_profile = _retime_profile(
+                record["image_motion_profile"], record["future_times_s"], reverse=True
+            )
         reversed_result = compare_future_control(
             reversed_profile,
             record["reference_motion_profile"],
@@ -172,9 +182,16 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
                 float(donor["history_motion_profile"]["history_anchor"]["speed_mps"]) - target_speed
             )
             if speed_gap <= 0.5:
-                shuffled_profile = _retime_profile(
-                    donor["image_motion_profile"], record["future_times_s"]
-                )
+                if donor["image_motion_profile"].get("source") == "history_anchored_image_residual_decoder":
+                    shuffled_profile = reanchor_longitudinal_control_profile(
+                        donor["image_motion_profile"],
+                        record["history_motion_profile"],
+                        record["future_times_s"],
+                    )
+                else:
+                    shuffled_profile = _retime_profile(
+                        donor["image_motion_profile"], record["future_times_s"]
+                    )
                 shuffled = compare_future_control(
                     shuffled_profile,
                     record["reference_motion_profile"],
@@ -356,8 +373,28 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
     input_audit_ready = bool(records) and all(
         record.get("level1_input_audit", {}).get("ready") is True for record in records
     )
+    raw_metrics: dict[str, Any] = {}
+    for field in fields:
+        values = [
+            record.get("raw_image_comparison", {}).get("metrics", {}).get(field, {}).get("mae")
+            for record in valid
+        ]
+        values = [float(value) for value in values if value is not None]
+        raw_metrics[field] = {
+            "sample_mean_mae": None if not values else float(np.mean(values)),
+            "samples": len(values),
+        }
+    longitudinal_models = {
+        str(record.get("image_motion_profile", {}).get("longitudinal_model", {}).get("protocol"))
+        for record in valid
+        if record.get("image_motion_profile", {}).get("longitudinal_model")
+    }
     return {
-        "protocol": "continuous-foresight-action-level1-v2",
+        "protocol": (
+            "continuous-foresight-action-level1-longitudinal-v3"
+            if longitudinal_models
+            else "continuous-foresight-action-level1-v2"
+        ),
         "evidence_scope": (
             "image_measurement_validation_only"
             if reference_source != "action"
@@ -376,6 +413,8 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
         "samples_missing_decoder_score": sum(record.get("status") == "missing_decoder_score" for record in records),
         "mean_interval_coverage": None if not valid else float(np.mean([record["comparison"]["coverage"] for record in valid])),
         "metrics": metrics,
+        "raw_absolute_image_metrics": raw_metrics,
+        "longitudinal_model_protocols": sorted(longitudinal_models),
         "metric_families": [
             "continuous_alignment",
             "foresight_gain_over_history",
@@ -411,10 +450,33 @@ def main() -> None:
     parser.add_argument("--reference-source", choices=("logged_gt", "realized", "action"), default="logged_gt")
     parser.add_argument("--include-uncertain", action="store_true")
     parser.add_argument("--require-eight-frame-four-second", action="store_true")
+    parser.add_argument("--longitudinal-calibration", type=Path)
+    parser.add_argument(
+        "--calibration-application-split",
+        choices=("fit", "calibration", "evaluation"),
+        default="evaluation",
+    )
     args = parser.parse_args()
 
     manifest = read_jsonl(args.manifest)
     scores = {str(row["sample_id"]): row for row in read_jsonl(args.scores)}
+    calibration = None
+    evaluation_ids = None
+    if args.longitudinal_calibration is not None:
+        calibration = json.loads(args.longitudinal_calibration.read_text(encoding="utf-8"))
+        if calibration.get("protocol") != "longitudinal-residual-calibration-v1":
+            raise ValueError("unsupported longitudinal calibration protocol")
+        if calibration.get("reference_source") != args.reference_source:
+            raise ValueError("calibration reference source does not match evaluation")
+        split_key = f"{args.calibration_application_split}_sample_ids"
+        evaluation_ids = set(calibration.get("split", {}).get(split_key) or [])
+        if not evaluation_ids:
+            raise ValueError(f"calibration artifact must provide {split_key}")
+        manifest = [row for row in manifest if str(row["sample_id"]) in evaluation_ids]
+        found_ids = {str(row["sample_id"]) for row in manifest}
+        if found_ids != evaluation_ids:
+            missing = sorted(evaluation_ids - found_ids)
+            raise ValueError(f"evaluation samples missing from manifest: {missing[:5]}")
     records = []
     for row in manifest:
         sample_id = str(row["sample_id"])
@@ -436,7 +498,6 @@ def main() -> None:
             raise ValueError(f"{sample_id}: candidate-blind audit failed")
         history_state = _history_state(row)
         initial_speed = _initial_speed(row)
-        imagined = image_motion_profile(score["decoder"], times, initial_speed_mps=initial_speed)
         reference = trajectory_to_motion_profile(
             _reference(row, args.reference_source), times, initial_speed_mps=initial_speed
         )
@@ -448,7 +509,22 @@ def main() -> None:
             history_times_s=history_times,
             model="constant_acceleration_yaw_rate",
         )
+        raw_imagined = image_motion_profile(score["decoder"], times, initial_speed_mps=initial_speed)
+        if calibration is None:
+            imagined = raw_imagined
+        else:
+            parameters = calibration.get("parameters") or {}
+            imagined = history_anchored_residual_motion_profile(
+                score["decoder"],
+                times,
+                history_profile,
+                longitudinal_gain=float(parameters["longitudinal_gain"]),
+                speed_interval_radius_mps=float(parameters["speed_interval_radius_mps"]),
+            )
         comparison = compare_motion_profiles(imagined, reference, include_uncertain=args.include_uncertain)
+        raw_comparison = compare_motion_profiles(
+            raw_imagined, reference, include_uncertain=args.include_uncertain
+        )
         history_comparison = compare_history_baseline(
             history_profile,
             reference,
@@ -468,6 +544,7 @@ def main() -> None:
             "reference_source": args.reference_source,
             "level1_input_audit": _level1_input_audit(row, args.reference_source),
             "image_motion_profile": imagined,
+            "raw_image_motion_profile": raw_imagined,
             "history_motion_profile": history_profile,
             "history_nulls": {
                 "primary": "constant_acceleration_yaw_rate",
@@ -482,14 +559,20 @@ def main() -> None:
             },
             "reference_motion_profile": reference,
             "comparison": comparison,
+            "raw_image_comparison": raw_comparison,
             "history_baseline_comparison": history_comparison,
             "foresight_gain": foresight_gain(comparison, history_comparison),
         })
     add_specificity_controls(records, include_uncertain=args.include_uncertain)
     report = {
         "summary": aggregate(records, args.reference_source),
+        "calibration_application_split": args.calibration_application_split,
+        "longitudinal_calibration": calibration,
         "records": records,
     }
+    if calibration is not None and args.calibration_application_split != "evaluation":
+        report["summary"]["formal_level1_evidence_eligible"] = False
+        report["summary"]["calibration_split_audit_only"] = True
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps(report["summary"], indent=2, ensure_ascii=False))

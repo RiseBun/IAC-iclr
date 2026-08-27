@@ -8,10 +8,14 @@ from iac_new.continuous_motion import (
     compare_counterfactual_motion_deltas,
     compare_motion_profiles,
     foresight_gain,
+    history_anchored_residual_motion_profile,
     history_only_motion_profile,
     image_motion_profile,
+    longitudinal_residual_features,
+    reanchor_longitudinal_control_profile,
     trajectory_to_motion_profile,
 )
+from scripts.calibrate_longitudinal_residual import fit_longitudinal_gain, split_scene_groups
 from iac_new.trajectory_decode import integrate_piecewise_controls
 from scripts.evaluate_counterfactual_continuous_alignment import audit_pair
 from scripts.evaluate_continuous_motion_alignment import _level1_input_audit
@@ -95,6 +99,83 @@ class ContinuousMotionTest(unittest.TestCase):
         gain = foresight_gain(image_result, history_result)
         self.assertEqual(image_result["coverage"], history_result["coverage"])
         self.assertGreater(gain["metrics"]["speed_mps"]["absolute_gain"], 0.0)
+
+    def test_longitudinal_residual_discards_multiplicative_image_scale(self) -> None:
+        times = [0.5, 1.0, 1.5, 2.0]
+        history = history_only_motion_profile([[0.0, 0.0, 0.0, 4.0, 0.0]], times)
+        first = longitudinal_residual_features(decoder([5.0, 6.0, 7.0, 8.0]), times, history)
+        shifted = longitudinal_residual_features(decoder([10.0, 12.0, 14.0, 16.0]), times, history)
+        np.testing.assert_allclose(
+            [row["image_speed_delta_mps"] for row in first["rows"]],
+            [row["image_speed_delta_mps"] for row in shifted["rows"]],
+        )
+        self.assertFalse(first["absolute_image_speed_used"])
+
+    def test_zero_longitudinal_gain_is_exact_history_null(self) -> None:
+        times = [0.5, 1.0, 1.5, 2.0]
+        history = history_only_motion_profile([[0.0, 0.0, 0.0, 4.0, 0.0]], times)
+        profile = history_anchored_residual_motion_profile(
+            decoder([5.0, 6.0, 7.0, 8.0]),
+            times,
+            history,
+            longitudinal_gain=0.0,
+            speed_interval_radius_mps=0.5,
+        )
+        np.testing.assert_allclose(
+            [row["speed_mps"] for row in profile["rows"]],
+            [row["speed_mps"] for row in history["rows"]],
+        )
+        self.assertFalse(profile["longitudinal_model"]["action_waypoint_visible_to_predictor"])
+
+    def test_longitudinal_control_reanchors_to_recipient_history(self) -> None:
+        times = [0.5, 1.0, 1.5, 2.0]
+        donor_history = history_only_motion_profile([[0.0, 0.0, 0.0, 4.0, 0.0]], times)
+        target_history = history_only_motion_profile([[0.0, 0.0, 0.0, 10.0, 0.0]], times)
+        donor = history_anchored_residual_motion_profile(
+            decoder([5.0, 5.5, 6.0, 6.5]),
+            times,
+            donor_history,
+            longitudinal_gain=1.0,
+            speed_interval_radius_mps=0.5,
+        )
+        transferred = reanchor_longitudinal_control_profile(donor, target_history, times)
+        donor_delta = [
+            row["longitudinal_residual_feature"]["image_speed_delta_mps"]
+            for row in donor["rows"]
+        ]
+        np.testing.assert_allclose(
+            [row["speed_mps"] for row in transferred["rows"]],
+            np.asarray(donor_delta) + 10.0,
+        )
+        self.assertTrue(transferred["longitudinal_model"]["control_reanchored"])
+
+    def test_scene_split_is_deterministic_and_disjoint(self) -> None:
+        rows = [
+            {"sample_id": f"sample-{index}", "scene_id": f"scene-{index // 2}"}
+            for index in range(12)
+        ]
+        first = split_scene_groups(rows, seed=17, fit_fraction=0.4, calibration_fraction=0.3)
+        second = split_scene_groups(rows, seed=17, fit_fraction=0.4, calibration_fraction=0.3)
+        self.assertEqual(first, second)
+        self.assertFalse(set(first["fit"]) & set(first["calibration"]))
+        self.assertFalse(set(first["fit"]) & set(first["evaluation"]))
+        self.assertFalse(set(first["calibration"]) & set(first["evaluation"]))
+
+    def test_longitudinal_gain_fit_recovers_synthetic_residual_scale(self) -> None:
+        record = {
+            "decoder": {
+                "speed_support": [
+                    {"status": "usable", "observability": 1.0},
+                    {"status": "usable", "observability": 1.0},
+                ]
+            },
+            "features": {"rows": [{"innovation_mps": 1.0}, {"innovation_mps": 2.0}]},
+            "history_profile": {"rows": [{"speed_mps": 4.0}, {"speed_mps": 4.0}]},
+            "reference_profile": {"rows": [{"speed_mps": 4.5}, {"speed_mps": 5.0}]},
+        }
+        fit = fit_longitudinal_gain([record])
+        self.assertAlmostEqual(fit["longitudinal_gain"], 0.5)
+        self.assertAlmostEqual(fit["weighted_residual_mae_mps"], 0.0)
 
     def test_future_control_uses_target_observability_mask(self) -> None:
         times = [0.5, 1.0, 1.5, 2.0]

@@ -25,7 +25,15 @@ continuous alignment must beat a strong history-only null, a history-speed
 matched shuffled future, and a time-reversed future before a motion component
 is accepted as carrying incremental foresight information.
 
+The first [history-anchored longitudinal residual experiment](docs/LEVEL1_LONGITUDINAL_RESIDUAL_V3_ZH.md)
+reduces raw RAFT speed error substantially, but its scene-disjoint test result
+does not beat the strong history-only null. It is retained as a falsified,
+reproducible baseline rather than reported as a successful metric.
+
 ![Converged IAC continuous foresight-action architecture](docs/figures/continuous_foresight_alignment_v1.svg)
+
+The Level 1 longitudinal branch and its fail-closed next-step boundary are shown in
+[the updated flow chart](docs/figures/level1_continuous_alignment_v2.png).
 
 ## Method
 

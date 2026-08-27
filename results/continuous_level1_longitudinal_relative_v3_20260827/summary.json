@@ -1,0 +1,32 @@
+{
+  "protocol": "continuous-foresight-action-level1-longitudinal-v3",
+  "evidence_scope": "image_measurement_validation_only",
+  "formal_level1_evidence_eligible": false,
+  "data_protocol": "NAVSIM proxy, logged future, 4 frames, 2 seconds",
+  "split": {
+    "method": "scene-disjoint fit/calibration/evaluation",
+    "fit_samples": 36,
+    "calibration_samples": 26,
+    "evaluation_samples": 16,
+    "strict_evaluable_evaluation_samples": 10
+  },
+  "parameters": {
+    "longitudinal_gain": 0.1269330935796389,
+    "speed_interval_radius_mps": 2.1184324779001065
+  },
+  "evaluation": {
+    "raw_raft_speed_mae_mps": 1.39640267559077,
+    "residual_speed_mae_mps": 0.3568169756258949,
+    "residual_acceleration_mae_mps2": 0.4276842274940247,
+    "speed_gain_over_ca_cyr_mps": -0.047254909440233986,
+    "speed_gain_95ci_mps": [-0.10891896400295345, 0.01134378145877631],
+    "matched_shuffle_lift_mps": 0.012856506802207127,
+    "matched_shuffle_lift_95ci_mps": [-0.03428201726116211, 0.06787538108227639],
+    "time_reversed_lift_mps": 0.07143549842826769,
+    "time_reversed_lift_95ci_mps": [-0.003964393613996575, 0.19121018973353093],
+    "speed_posterior_empirical_coverage": 1.0,
+    "speed_posterior_mean_width_mps": 3.837306870492266,
+    "incremental_signal_resolved": false
+  },
+  "conclusion": "Absolute error is greatly reduced, but the longitudinal image residual does not generalize beyond the strong history-only null."
+}
