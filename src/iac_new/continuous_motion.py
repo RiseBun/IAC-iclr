@@ -7,6 +7,7 @@ candidate-blind image measurement upstream of the comparison boundary.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 import numpy as np
@@ -173,6 +174,9 @@ def image_motion_profile(
     speed_support = list(decoder.get("speed_support") or [])
     if len(speed_support) != len(profile["rows"]):
         raise ValueError("decoder speed_support must match trajectory intervals")
+    pose_support = list(decoder.get("profile_support") or [])
+    if pose_support and len(pose_support) != len(profile["rows"]):
+        raise ValueError("decoder profile_support must match trajectory intervals")
     speeds = np.asarray([float(item["q50"]) for item in speed_support], dtype=np.float64)
     times = np.asarray(future_times_s, dtype=np.float64)
     dt = np.diff(np.concatenate([[0.0], times]))
@@ -192,6 +196,24 @@ def image_motion_profile(
         }
         row["observability"] = float(np.clip(support.get("observability", 0.0), 0.0, 1.0))
         row["status"] = str(support.get("status", "abstain"))
+        if pose_support:
+            support_row = pose_support[index]
+            intervals = {}
+            for source_key, output_key in (("x_m", "x_m"), ("y_m", "y_m"), ("yaw_rad", "heading_rad")):
+                interval = support_row.get(source_key)
+                if interval is None:
+                    continue
+                if not all(key in interval and np.isfinite(interval[key]) for key in ("q05", "q50", "q95")):
+                    raise ValueError(f"decoder profile_support[{index}] has invalid {source_key}")
+                if not float(interval["q05"]) <= float(interval["q50"]) <= float(interval["q95"]):
+                    raise ValueError(f"decoder profile_support[{index}] has unordered {source_key}")
+                intervals[output_key] = {
+                    "q05": float(interval["q05"]),
+                    "q50": float(interval["q50"]),
+                    "q95": float(interval["q95"]),
+                }
+            if intervals:
+                row["pose_intervals"] = intervals
     residual_mode = bool(
         (decoder.get("decoder_parameters") or {}).get("history_anchored_speed_residual")
     )
@@ -802,6 +824,154 @@ def compare_pose_profiles(
             "action_used_for_image_scale": False,
         },
     }
+
+
+def compare_pose_posteriors(
+    image_profile: dict[str, Any],
+    action_profile: dict[str, Any],
+    *,
+    include_uncertain: bool = False,
+    nominal_coverage: float = 0.90,
+) -> dict[str, Any]:
+    """Evaluate calibrated ``x/y/heading`` intervals against action waypoints."""
+    if image_profile.get("source") not in IMAGE_PROFILE_SOURCES:
+        raise ValueError("image_profile must be produced independently from action waypoints")
+    if not np.isfinite(nominal_coverage) or not 0.0 < nominal_coverage < 1.0:
+        raise ValueError("nominal_coverage must be between zero and one")
+    predicted_rows = list(image_profile.get("rows") or [])
+    action_rows = list(action_profile.get("rows") or [])
+    if not predicted_rows or len(predicted_rows) != len(action_rows):
+        raise ValueError("pose posterior profiles must have matching non-empty rows")
+    allowed = {"usable", "uncertain"} if include_uncertain else {"usable"}
+    components = {
+        "x_m": ("progress_m", False),
+        "y_m": ("lateral_offset_m", False),
+        "heading_rad": ("heading_rad", True),
+    }
+    alpha = 1.0 - float(nominal_coverage)
+    rows_by_component: dict[str, list[tuple[bool, float, float, float, float, float]]] = {
+        key: [] for key in components
+    }
+    joint_rows: list[tuple[bool, float]] = []
+    for predicted, action in zip(predicted_rows, action_rows):
+        if str(predicted.get("status", "abstain")) not in allowed:
+            continue
+        intervals = predicted.get("pose_intervals") or {}
+        component_hits = []
+        for component, (target_key, is_angle) in components.items():
+            interval = intervals.get(component)
+            target = action.get(target_key)
+            if interval is None or target is None or not all(
+                np.isfinite(interval.get(key, np.nan)) for key in ("q05", "q50", "q95")
+            ) or not np.isfinite(target):
+                continue
+            lower = float(interval["q05"])
+            median = float(interval["q50"])
+            upper = float(interval["q95"])
+            target_value = float(target)
+            if is_angle:
+                target_value = float(median + _wrapped_delta(np.asarray(target_value - median)))
+            hit = lower <= target_value <= upper
+            width = upper - lower
+            interval_score = width
+            if target_value < lower:
+                interval_score += 2.0 / alpha * (lower - target_value)
+            elif target_value > upper:
+                interval_score += 2.0 / alpha * (target_value - upper)
+            wis = (0.5 * abs(target_value - median) + alpha / 2.0 * interval_score) / 1.5
+            observability = max(float(predicted.get("observability", 0.0)), 1e-3)
+            rows_by_component[component].append(
+                (bool(hit), width, interval_score, wis, observability, abs(target_value - median))
+            )
+            component_hits.append(bool(hit))
+        if len(component_hits) == len(components):
+            joint_rows.append((all(component_hits), max(float(predicted.get("observability", 0.0)), 1e-3)))
+
+    def summarize(rows: list[tuple[bool, float, float, float, float, float]]) -> dict[str, Any]:
+        if not rows:
+            return {
+                "status": "abstain",
+                "empirical_coverage": None,
+                "absolute_calibration_error": None,
+                "mean_interval_width": None,
+                "mean_interval_score": None,
+                "mean_wis": None,
+                "mean_median_abs_error": None,
+                "intervals": 0,
+            }
+        values = np.asarray(rows, dtype=np.float64)
+        weights = np.maximum(values[:, 4], 1e-3)
+        empirical = float(np.average(values[:, 0], weights=weights))
+        return {
+            "status": "ok",
+            "empirical_coverage": empirical,
+            "absolute_calibration_error": abs(empirical - nominal_coverage),
+            "mean_interval_width": float(np.average(values[:, 1], weights=weights)),
+            "mean_interval_score": float(np.average(values[:, 2], weights=weights)),
+            "mean_wis": float(np.average(values[:, 3], weights=weights)),
+            "mean_median_abs_error": float(np.average(values[:, 5], weights=weights)),
+            "intervals": int(len(rows)),
+        }
+
+    joint = None
+    if joint_rows:
+        joint_values = np.asarray(joint_rows, dtype=np.float64)
+        joint_weights = np.maximum(joint_values[:, 1], 1e-3)
+        joint = {
+            "status": "ok",
+            "empirical_coverage": float(np.average(joint_values[:, 0], weights=joint_weights)),
+            "absolute_calibration_error": abs(float(np.average(joint_values[:, 0], weights=joint_weights)) - nominal_coverage),
+            "intervals": int(len(joint_rows)),
+        }
+    total_eligible = sum(1 for row in predicted_rows if str(row.get("status", "abstain")) in allowed)
+    evaluated = sum(1 for row in rows_by_component["x_m"])
+    return {
+        "protocol": "continuous-se2-pose-posterior-v1",
+        "status": "ok" if any(rows_by_component.values()) else "abstain",
+        "nominal_coverage": float(nominal_coverage),
+        "coverage": float(evaluated / len(predicted_rows)),
+        "evaluable_intervals": int(evaluated),
+        "total_intervals": int(len(predicted_rows)),
+        "eligible_point_intervals": int(total_eligible),
+        "metrics": {component: summarize(rows) for component, rows in rows_by_component.items()},
+        "joint_pose": joint or {
+            "status": "abstain",
+            "empirical_coverage": None,
+            "absolute_calibration_error": None,
+            "intervals": 0,
+        },
+        "leakage_audit": {
+            "action_waypoint_visible_to_image_decoder": False,
+            "action_used_for_pose_interval_calibration": False,
+        },
+    }
+
+
+def apply_pose_interval_calibration(
+    image_profile: dict[str, Any],
+    calibration: dict[str, Any],
+) -> dict[str, Any]:
+    """Inflate pose intervals with a calibration-only conformal radius."""
+    if image_profile.get("source") not in IMAGE_PROFILE_SOURCES:
+        raise ValueError("image_profile must be produced independently from action waypoints")
+    if calibration.get("protocol") != "continuous-se2-pose-calibration-v1":
+        raise ValueError("unsupported pose calibration protocol")
+    calibrated = copy.deepcopy(image_profile)
+    radii = calibration.get("parameters", {}).get("conformal_radius", {})
+    for row in calibrated.get("rows") or []:
+        intervals = row.get("pose_intervals") or {}
+        for component, interval in intervals.items():
+            radius = float(radii.get(component, 0.0))
+            if not np.isfinite(radius) or radius < 0.0:
+                raise ValueError(f"invalid conformal radius for {component}")
+            interval["q05"] = float(interval["q05"]) - radius
+            interval["q95"] = float(interval["q95"]) + radius
+    calibrated["pose_interval_calibration"] = {
+        "protocol": calibration["protocol"],
+        "parameters": {"conformal_radius": {key: float(value) for key, value in radii.items()}},
+        "action_waypoint_used": False,
+    }
+    return calibrated
 
 
 def compare_history_baseline(

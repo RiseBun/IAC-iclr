@@ -135,6 +135,28 @@ PYTHONPATH=src:. python scripts/evaluate_continuous_motion_alignment.py \
   --output continuous_motion.json
 ```
 
+Calibrate and audit the continuous `SE(2)` pose posterior on a scene-disjoint
+split. Calibration uses only the independent logged reference; the frozen
+artifact is then applied to a held-out evaluation split:
+
+```bash
+PYTHONPATH=src:. python scripts/calibrate_pose_posterior.py \
+  --manifest navsim_level1_history4_future8_4s_78_manifest.jsonl \
+  --scores decoder_scores.jsonl --reference-source logged_gt \
+  --output pose_calibration.json
+
+PYTHONPATH=src:. python scripts/evaluate_continuous_motion_alignment.py \
+  --manifest navsim_level1_history4_future8_4s_78_manifest.jsonl \
+  --scores decoder_scores.jsonl --reference-source logged_gt \
+  --pose-calibration pose_calibration.json \
+  --pose-calibration-application-split evaluation \
+  --output pose_posterior_evaluation.json
+```
+
+The pose posterior reports per-component and joint coverage, interval score,
+WIS, and interval width. Wide calibrated intervals are reported as a limitation,
+not as improved geometric accuracy.
+
 Evaluate true paired WAM counterfactuals only when both generated-image decoder
 outputs and action-head trajectories are present:
 

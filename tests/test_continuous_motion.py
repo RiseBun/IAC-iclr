@@ -11,6 +11,8 @@ from iac_new.continuous_motion import (
     compare_motion_profiles,
     compare_distance_profiles,
     compare_pose_profiles,
+    compare_pose_posteriors,
+    apply_pose_interval_calibration,
     foresight_gain,
     history_anchored_residual_motion_profile,
     history_only_motion_profile,
@@ -20,6 +22,7 @@ from iac_new.continuous_motion import (
     trajectory_to_motion_profile,
 )
 from scripts.calibrate_longitudinal_residual import fit_longitudinal_gain, split_scene_groups
+from scripts.calibrate_pose_posterior import fit_pose_interval_calibration
 from iac_new.trajectory_decode import integrate_piecewise_controls
 from scripts.evaluate_counterfactual_continuous_alignment import audit_pair
 from scripts.evaluate_continuous_motion_alignment import _level1_input_audit
@@ -35,6 +38,14 @@ def decoder(speeds: list[float], *, curvature: float = 0.0) -> dict:
     return {
         "protocol": "candidate-blind-continuous-trajectory-v1",
         "trajectory": trajectory.tolist(),
+        "profile_support": [
+            {
+                "x_m": {"q05": float(point[0] - 0.2), "q50": float(point[0]), "q95": float(point[0] + 0.2)},
+                "y_m": {"q05": float(point[1] - 0.1), "q50": float(point[1]), "q95": float(point[1] + 0.1)},
+                "yaw_rad": {"q05": float(point[2] - 0.02), "q50": float(point[2]), "q95": float(point[2] + 0.02)},
+            }
+            for point in trajectory
+        ],
         "speed_support": [
             {"q05": speed - 0.4, "q50": speed, "q95": speed + 0.4, "observability": 0.8, "status": "usable"}
             for speed in speeds
@@ -102,6 +113,51 @@ class ContinuousMotionTest(unittest.TestCase):
         assert metric["metrics"]["se2_pose"]["forward_mae"] > 0.0
         assert shape["metrics"]["se2_pose"]["path_cosine"] > 0.99
         assert shape["leakage_audit"]["action_used_for_image_scale"] is False
+
+    def test_pose_posterior_reports_component_and_joint_coverage(self) -> None:
+        times = [0.5, 1.0, 1.5, 2.0]
+        value = decoder([4.0] * 4)
+        imagined = image_motion_profile(value, times, initial_speed_mps=4.0)
+        action = trajectory_to_motion_profile(value["trajectory"], times, initial_speed_mps=4.0)
+        result = compare_pose_posteriors(imagined, action)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["metrics"]["x_m"]["empirical_coverage"], 1.0)
+        self.assertEqual(result["metrics"]["y_m"]["empirical_coverage"], 1.0)
+        self.assertEqual(result["metrics"]["heading_rad"]["empirical_coverage"], 1.0)
+        self.assertEqual(result["joint_pose"]["empirical_coverage"], 1.0)
+        self.assertFalse(result["leakage_audit"]["action_used_for_pose_interval_calibration"])
+
+    def test_pose_posterior_excludes_abstained_intervals_from_coverage(self) -> None:
+        times = [0.5, 1.0, 1.5, 2.0]
+        value = decoder([4.0] * 4)
+        value["speed_support"][0]["status"] = "abstain"
+        imagined = image_motion_profile(value, times, initial_speed_mps=4.0)
+        action = trajectory_to_motion_profile(value["trajectory"], times, initial_speed_mps=4.0)
+        result = compare_pose_posteriors(imagined, action)
+        self.assertEqual(result["evaluable_intervals"], 3)
+        self.assertEqual(result["coverage"], 0.75)
+
+    def test_pose_interval_calibration_is_additive_and_action_blind_at_apply_time(self) -> None:
+        times = [0.5, 1.0, 1.5, 2.0]
+        value = decoder([4.0] * 4)
+        imagined = image_motion_profile(value, times, initial_speed_mps=4.0)
+        action = trajectory_to_motion_profile(value["trajectory"], times, initial_speed_mps=4.0)
+        for row in action["rows"]:
+            row["progress_m"] += 1.0
+        artifact = fit_pose_interval_calibration([
+            {"decoder": value, "image_profile": imagined, "reference_profile": action}
+        ])
+        self.assertGreater(artifact["parameters"]["conformal_radius"]["x_m"], 0.0)
+        self.assertFalse(artifact["action_waypoint_used_for_interval_fit"])
+        self.assertTrue(artifact["independent_reference_used_for_interval_fit"])
+        calibrated = apply_pose_interval_calibration(imagined, {
+            **artifact,
+            "protocol": "continuous-se2-pose-calibration-v1",
+        })
+        result = compare_pose_posteriors(calibrated, action)
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["metrics"]["x_m"]["empirical_coverage"], 1.0)
+        self.assertFalse(calibrated["pose_interval_calibration"]["action_waypoint_used"])
 
     def test_history_null_uses_last_speed_and_yaw_rate(self) -> None:
         profile = history_only_motion_profile(

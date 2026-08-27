@@ -19,6 +19,8 @@ from iac_new.continuous_motion import (
     compare_motion_profiles,
     compare_distance_profiles,
     compare_pose_profiles,
+    compare_pose_posteriors,
+    apply_pose_interval_calibration,
     foresight_gain,
     history_anchored_residual_motion_profile,
     history_only_motion_profile,
@@ -497,6 +499,34 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
             "sample_mean_path_cosine": mean_value("path_cosine"),
             "unit": "m/rad" if mode == "metric" else "normalized_translation/rad",
         }
+    pose_posterior_records = [
+        record.get("pose_posterior", {})
+        for record in records
+        if record.get("pose_posterior", {}).get("status") == "ok"
+    ]
+    pose_posterior_summary: dict[str, Any] = {}
+    for component in ("x_m", "y_m", "heading_rad"):
+        component_rows = [record["metrics"].get(component, {}) for record in pose_posterior_records]
+        def posterior_mean(key: str) -> float | None:
+            values = [float(row[key]) for row in component_rows if row.get(key) is not None]
+            return None if not values else float(np.mean(values))
+        pose_posterior_summary[component] = {
+            "empirical_coverage": posterior_mean("empirical_coverage"),
+            "absolute_calibration_error": posterior_mean("absolute_calibration_error"),
+            "mean_interval_width": posterior_mean("mean_interval_width"),
+            "mean_interval_score": posterior_mean("mean_interval_score"),
+            "mean_wis": posterior_mean("mean_wis"),
+            "samples": len(component_rows),
+        }
+    joint_rows = [record["joint_pose"] for record in pose_posterior_records]
+    joint_coverages = [float(row["empirical_coverage"]) for row in joint_rows if row.get("empirical_coverage") is not None]
+    pose_posterior_summary["joint_pose"] = {
+        "empirical_coverage": None if not joint_coverages else float(np.mean(joint_coverages)),
+        "absolute_calibration_error": None if not joint_coverages else float(np.mean([
+            abs(value - 0.90) for value in joint_coverages
+        ])),
+        "samples": len(joint_coverages),
+    }
     behavior_rows = [record.get("longitudinal_behavior") for record in valid if record.get("longitudinal_behavior")]
     behavior = {
         "delta_speed_mae_mps": None if not behavior_rows else float(np.mean([row["delta_speed_mae_mps"] for row in behavior_rows])),
@@ -555,6 +585,11 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
         "raw_absolute_image_metrics": raw_metrics,
         "forward_distance_alignment": distance_summary,
         "se2_pose_alignment": pose_summary,
+        "se2_pose_posterior": {
+            "samples": len(pose_posterior_records),
+            "nominal_coverage": 0.90,
+            "metrics": pose_posterior_summary,
+        },
         "longitudinal_behavior": behavior,
         "longitudinal_model_protocols": sorted(longitudinal_models),
         "metric_families": [
@@ -563,6 +598,7 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
             "matched_shuffle_specificity",
             "time_order_specificity",
             "proper_speed_posterior",
+            "proper_pose_posterior",
             "coverage_risk",
         ],
         "incremental_evidence": _incremental_evidence(valid),
@@ -593,6 +629,12 @@ def main() -> None:
     parser.add_argument("--include-uncertain", action="store_true")
     parser.add_argument("--require-eight-frame-four-second", action="store_true")
     parser.add_argument("--longitudinal-calibration", type=Path)
+    parser.add_argument("--pose-calibration", type=Path)
+    parser.add_argument(
+        "--pose-calibration-application-split",
+        choices=("fit", "calibration", "evaluation"),
+        default="evaluation",
+    )
     parser.add_argument(
         "--calibration-application-split",
         choices=("fit", "calibration", "evaluation"),
@@ -603,6 +645,7 @@ def main() -> None:
     manifest = read_jsonl(args.manifest)
     scores = {str(row["sample_id"]): row for row in read_jsonl(args.scores)}
     calibration = None
+    pose_calibration = None
     evaluation_ids = None
     if args.longitudinal_calibration is not None:
         calibration = json.loads(args.longitudinal_calibration.read_text(encoding="utf-8"))
@@ -619,6 +662,24 @@ def main() -> None:
         if found_ids != evaluation_ids:
             missing = sorted(evaluation_ids - found_ids)
             raise ValueError(f"evaluation samples missing from manifest: {missing[:5]}")
+    if args.pose_calibration is not None:
+        pose_calibration = json.loads(args.pose_calibration.read_text(encoding="utf-8"))
+        if pose_calibration.get("protocol") != "continuous-se2-pose-calibration-v1":
+            raise ValueError("unsupported pose calibration protocol")
+        if pose_calibration.get("reference_source") != args.reference_source:
+            raise ValueError("pose calibration reference source does not match evaluation")
+        pose_split_ids = set(
+            pose_calibration.get("split", {}).get(
+                f"{args.pose_calibration_application_split}_sample_ids"
+            )
+            or []
+        )
+        if pose_split_ids:
+            manifest = [row for row in manifest if str(row["sample_id"]) in pose_split_ids]
+            found_ids = {str(row["sample_id"]) for row in manifest}
+            if found_ids != pose_split_ids:
+                missing = sorted(pose_split_ids - found_ids)
+                raise ValueError(f"pose calibration samples missing from manifest: {missing[:5]}")
     records = []
     for row in manifest:
         sample_id = str(row["sample_id"])
@@ -676,6 +737,14 @@ def main() -> None:
         pose_alignment_scale_free = compare_pose_profiles(
             imagined, reference, scale_mode="scale_free", include_uncertain=args.include_uncertain
         )
+        pose_image_profile = (
+            apply_pose_interval_calibration(raw_imagined, pose_calibration)
+            if pose_calibration is not None
+            else raw_imagined
+        )
+        pose_posterior = compare_pose_posteriors(
+            pose_image_profile, reference, include_uncertain=args.include_uncertain
+        )
         raw_comparison = compare_motion_profiles(
             raw_imagined, reference, include_uncertain=args.include_uncertain
         )
@@ -729,6 +798,7 @@ def main() -> None:
             "distance_alignment_scale_free": distance_alignment_scale_free,
             "pose_alignment_metric": pose_alignment_metric,
             "pose_alignment_scale_free": pose_alignment_scale_free,
+            "pose_posterior": pose_posterior,
             "raw_image_comparison": raw_comparison,
             "longitudinal_behavior": longitudinal_behavior,
             "history_longitudinal_behavior": history_longitudinal_behavior,
@@ -740,6 +810,7 @@ def main() -> None:
         "summary": aggregate(records, args.reference_source),
         "calibration_application_split": args.calibration_application_split,
         "longitudinal_calibration": calibration,
+        "pose_interval_calibration": pose_calibration,
         "records": records,
     }
     if calibration is not None and args.calibration_application_split != "evaluation":

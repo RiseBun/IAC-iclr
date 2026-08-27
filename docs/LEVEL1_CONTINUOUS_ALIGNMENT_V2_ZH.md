@@ -93,6 +93,45 @@ matched-shuffle 只使用历史速度和未来区间数量匹配，速度 calipe
 
 这能同时惩罚过窄、过宽和大量拒答。
 
+### 4.1 SE(2) 位姿后验与场景隔离校准
+
+连续位姿不是只输出一个点估计。图像侧对每个时间点输出：
+
+```text
+q(x_F), q(y_F), q(heading_F)
+```
+
+其中默认保存 `q05/q50/q95`。`x`、`y` 使用地面几何下的米制坐标，`heading`
+使用 ego-frame 弧度；缺少可靠观测时保留 `observability` 并允许 abstain。评估
+同时报告每个分量的 empirical coverage、absolute calibration error、区间宽度、
+90% interval score、WIS，以及三分量同时覆盖的 joint pose coverage。
+
+原始 decoder 区间不能用 action waypoint 调宽。若需要校准，只能在 scene-disjoint
+calibration split 上用独立 logged reference 拟合 additive conformal radius，再冻结
+到 evaluation split：
+
+```bash
+PYTHONPATH=src:. python scripts/calibrate_pose_posterior.py \
+  --manifest navsim_level1_history4_future8_4s_78_manifest.jsonl \
+  --scores results/continuous_level1_optimizer_residual_v4_20260827_8f/scores.jsonl \
+  --reference-source logged_gt \
+  --output results/level1_pose_calibration_8f_20260827.json
+
+PYTHONPATH=src:. python scripts/evaluate_continuous_motion_alignment.py \
+  --manifest navsim_level1_history4_future8_4s_78_manifest.jsonl \
+  --scores results/continuous_level1_optimizer_residual_v4_20260827_8f/scores.jsonl \
+  --reference-source logged_gt --require-eight-frame-four-second \
+  --pose-calibration results/level1_pose_calibration_8f_20260827.json \
+  --pose-calibration-application-split evaluation \
+  --output results/level1_pose_posterior_calibrated_eval_8f_20260827.json
+```
+
+校准 artifact 使用 Bonferroni 分量目标 `0.9667`，以覆盖三分量联合名义目标 `0.90`，
+并记录 fit/calibration/evaluation 的 scene ID。应用阶段只读取图像后验，不读取 action
+waypoint；artifact 会显式记录 `action_waypoint_used_for_interval_fit=false`、
+`independent_reference_used_for_interval_fit=true` 和 `action_waypoint_used=false`
+（应用阶段），防止把比较对象泄漏回图像分支。
+
 ## 5. 逐分量通过规则
 
 对每个运动分量分别进行样本级 bootstrap。只有以下三项 95% CI 下界均大于 0，才标记 `incremental_signal_resolved=true`：
@@ -136,12 +175,32 @@ WAM 生成的 8 张未来图像，保留历史状态、时间戳和相机标定�
 
 结论：图像 future 对横向运动具有可辨识的增量信息；纵向速度和加速度没有胜过只看历史的 CA-CYR 外推。不能通过把历史速度与图像速度简单融合来制造正 gain，那只会让预测退回 history null。
 
+### 6.1 8 帧/4 秒位姿后验审计
+
+在 `78` 条 NAVSIM 固定样本上，当前 decoder 有 `47` 条可评估区间。未校准的原始
+位姿区间明显过窄：
+
+| 分量 | 经验覆盖 | 名义覆盖 | 平均宽度 | WIS |
+|---|---:|---:|---:|---:|
+| `x` | 0.322 | 0.900 | 0.772 m | 0.750 |
+| `y` | 0.324 | 0.900 | 0.274 m | 0.171 |
+| `heading` | 0.730 | 0.900 | 0.036 rad | 0.006 |
+| joint pose | 0.141 | 0.900 | - | - |
+
+在独立 calibration scenes 上拟合得到 conformal 半径
+`x=3.977 m`、`y=1.365 m`、`heading=0.101 rad`。冻结后在未参与拟合的
+evaluation scenes（`10` 条可评估样本）上，joint pose coverage 为 `0.956`，但
+`x/y` 平均区间宽度扩大到 `8.863 m/3.147 m`。因此这一步证明的是**后验覆盖率可以
+被场景隔离地校准**，同时暴露出当前米制纵向/横向几何仍不够尖锐；它没有改善点估计
+MAE，也不能单独支撑 WAM 因果结论。
+
 ## 7. 下一步能力目标
 
 1. V3 已验证后处理式相对速度残差不能跨场景稳定超过 CA-CYR。
-2. 下一版把残差变量放入光流重投影优化器，而不是继续调融合权重。
+2. 位姿 conformal 校准只解决 coverage honesty；下一步要降低 `x/y` 非一致性，优先
+   进入共享尺度状态、长程对应或 metric-depth challenger，而不是手工收窄区间。
 3. 使用新的纵向激励样本和真实 `8 帧/4 秒` WAM future/action 重新运行三项门槛。
-4. 纵向分量未通过前，不构造 Level 1 总分，也不进入事件或 Level 2。
+4. 纵向分量与米制位姿未通过前，不构造 Level 1 总分，也不进入事件或 Level 2。
 
 ## 8. 复现
 
