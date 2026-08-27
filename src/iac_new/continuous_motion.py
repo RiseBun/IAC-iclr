@@ -96,6 +96,62 @@ def trajectory_to_motion_profile(
     }
 
 
+def history_only_motion_profile(
+    history_ego_state: Any,
+    future_times_s: Any,
+    *,
+    history_times_s: Any | None = None,
+    model: str = "constant_speed_yaw_rate",
+) -> dict[str, Any]:
+    """Extrapolate history without reading future images or action waypoints."""
+    history = np.asarray(history_ego_state, dtype=np.float64)
+    times = np.asarray(future_times_s, dtype=np.float64)
+    if history.ndim != 2 or history.shape[1] < 4 or len(history) < 1:
+        raise ValueError("history_ego_state must have shape [H,>=4]")
+    if not np.all(np.isfinite(history[:, :4])):
+        raise ValueError("history_ego_state must be finite through speed")
+    speed = max(float(history[-1, 3]), 0.0)
+    yaw_rate = (
+        float(history[-1, 4])
+        if history.shape[1] >= 5 and np.isfinite(history[-1, 4])
+        else 0.0
+    )
+    if model not in {"constant_speed_yaw_rate", "constant_acceleration_yaw_rate"}:
+        raise ValueError("unknown history-only baseline model")
+    acceleration = 0.0
+    if model == "constant_acceleration_yaw_rate":
+        history_times = np.asarray(history_times_s, dtype=np.float64)
+        if history_times.shape != (len(history),) or np.any(np.diff(history_times) <= 0.0):
+            raise ValueError("history_times_s must be increasing and match history state")
+        if len(history) >= 2:
+            design = np.column_stack([history_times - history_times[-1], np.ones(len(history_times))])
+            acceleration = float(np.linalg.lstsq(design, history[:, 3], rcond=None)[0][0])
+            acceleration = float(np.clip(acceleration, -5.0, 3.0))
+    trajectory = np.zeros((len(times), 3), dtype=np.float64)
+    previous_time = 0.0
+    for index, time_s in enumerate(times):
+        dt = float(time_s - previous_time)
+        previous = trajectory[index - 1] if index else np.zeros(3, dtype=np.float64)
+        interval_speed = max(speed + acceleration * 0.5 * (previous_time + float(time_s)), 0.0)
+        yaw_mid = float(previous[2] + 0.5 * yaw_rate * dt)
+        trajectory[index] = [
+            previous[0] + interval_speed * np.cos(yaw_mid) * dt,
+            previous[1] + interval_speed * np.sin(yaw_mid) * dt,
+            previous[2] + yaw_rate * dt,
+        ]
+        previous_time = float(time_s)
+    profile = trajectory_to_motion_profile(
+        trajectory, times, initial_speed_mps=speed
+    )
+    profile["source"] = f"history_only_{model}"
+    profile["history_anchor"] = {
+        "speed_mps": speed,
+        "acceleration_mps2": acceleration,
+        "yaw_rate_radps": yaw_rate,
+    }
+    return profile
+
+
 def image_motion_profile(
     decoder: dict[str, Any],
     future_times_s: Any,
@@ -139,21 +195,7 @@ def _finite_pair(first: Any, second: Any) -> bool:
     return first is not None and second is not None and np.isfinite(first) and np.isfinite(second)
 
 
-def compare_motion_profiles(
-    image_profile: dict[str, Any],
-    action_profile: dict[str, Any],
-    *,
-    include_uncertain: bool = False,
-    tolerances: dict[str, float] | None = None,
-) -> dict[str, Any]:
-    """Compare image-derived and action-derived motion without text labels."""
-    image_rows = list(image_profile.get("rows") or [])
-    action_rows = list(action_profile.get("rows") or [])
-    if len(image_rows) != len(action_rows) or not image_rows:
-        raise ValueError("image and action profiles must have matching non-empty rows")
-    if image_profile.get("source") != "image_only_candidate_blind_decoder":
-        raise ValueError("image_profile must be produced independently from action waypoints")
-    allowed = {"usable", "uncertain"} if include_uncertain else {"usable"}
+def _comparison_limits(tolerances: dict[str, float] | None) -> dict[str, float]:
     limits = {
         "speed_mps": 1.5,
         "acceleration_mps2": 1.5,
@@ -168,41 +210,78 @@ def compare_motion_profiles(
         limits.update({key: float(value) for key, value in tolerances.items()})
     if any(value <= 0.0 for value in limits.values()):
         raise ValueError("all tolerances must be positive")
+    return limits
 
+
+def _compare_profile_rows(
+    predicted_profile: dict[str, Any],
+    action_profile: dict[str, Any],
+    eligibility_profile: dict[str, Any],
+    *,
+    include_uncertain: bool,
+    limits: dict[str, float],
+    score_speed_posterior: bool,
+) -> dict[str, Any]:
+    predicted_rows = list(predicted_profile.get("rows") or [])
+    action_rows = list(action_profile.get("rows") or [])
+    eligibility_rows = list(eligibility_profile.get("rows") or [])
+    if not predicted_rows or len(predicted_rows) != len(action_rows) or len(predicted_rows) != len(eligibility_rows):
+        raise ValueError("predicted, action, and eligibility profiles must have matching non-empty rows")
+    allowed = {"usable", "uncertain"} if include_uncertain else {"usable"}
     per_interval = []
     metric_errors: dict[str, list[float]] = {field: [] for field in MOTION_FIELDS}
     metric_weights: dict[str, list[float]] = {field: [] for field in MOTION_FIELDS}
-    speed_interval_hits: list[bool] = []
+    posterior_rows: list[tuple[float, float, float, float, float]] = []
     evaluable = 0
-    for image_row, action_row in zip(image_rows, action_rows):
-        if abs(float(image_row["time_s"]) - float(action_row["time_s"])) > 1e-6:
-            raise ValueError("image and action timestamps must match")
-        use = image_row.get("status") in allowed
-        observability = float(np.clip(image_row.get("observability", 0.0), 0.0, 1.0))
+    for predicted_row, action_row, gate_row in zip(predicted_rows, action_rows, eligibility_rows):
+        timestamps = (predicted_row["time_s"], action_row["time_s"], gate_row["time_s"])
+        if max(float(value) for value in timestamps) - min(float(value) for value in timestamps) > 1e-6:
+            raise ValueError("predicted, action, and eligibility timestamps must match")
+        use = gate_row.get("status") in allowed
+        observability = float(np.clip(gate_row.get("observability", 0.0), 0.0, 1.0))
         errors: dict[str, float | None] = {}
         if use:
             evaluable += 1
         for field in MOTION_FIELDS:
-            left, right = image_row.get(field), action_row.get(field)
+            left, right = predicted_row.get(field), action_row.get(field)
             error = abs(float(left) - float(right)) if _finite_pair(left, right) else None
             errors[field] = error
             if use and error is not None:
                 metric_errors[field].append(error)
                 metric_weights[field].append(max(observability, 1e-3))
-        interval = image_row.get("speed_interval_mps")
+        interval = predicted_row.get("speed_interval_mps") if score_speed_posterior else None
         speed_hit = None
+        interval_width = None
+        interval_score = None
+        wis = None
         if use and interval and _finite_pair(action_row.get("speed_mps"), interval.get("q05")):
-            speed_hit = float(interval["q05"]) <= float(action_row["speed_mps"]) <= float(interval["q95"])
-            speed_interval_hits.append(speed_hit)
+            lower = float(interval["q05"])
+            median = float(interval["q50"])
+            upper = float(interval["q95"])
+            target = float(action_row["speed_mps"])
+            if not lower <= median <= upper:
+                raise ValueError("speed posterior quantiles must be ordered")
+            alpha = 0.10
+            interval_width = upper - lower
+            interval_score = interval_width
+            if target < lower:
+                interval_score += 2.0 / alpha * (lower - target)
+            elif target > upper:
+                interval_score += 2.0 / alpha * (target - upper)
+            wis = (0.5 * abs(target - median) + alpha / 2.0 * interval_score) / 1.5
+            speed_hit = lower <= target <= upper
+            posterior_rows.append((float(speed_hit), upper - lower, interval_score, wis, max(observability, 1e-3)))
         per_interval.append({
-            "time_s": float(image_row["time_s"]),
-            "status": image_row.get("status"),
+            "time_s": float(gate_row["time_s"]),
+            "status": gate_row.get("status"),
             "observability": observability,
             "evaluable": use,
             "absolute_errors": errors,
             "speed_interval_contains_action": speed_hit,
+            "speed_interval_width_mps": interval_width,
+            "speed_interval_score_90": interval_score,
+            "speed_wis_90": wis,
         })
-
     metrics: dict[str, Any] = {}
     normalized = []
     for field in MOTION_FIELDS:
@@ -219,24 +298,163 @@ def compare_motion_profiles(
             normalized.append(mae / limits[field])
         else:
             metrics[field] = {"mae": None, "rmse": None, "within_tolerance": None, "count": 0}
-    status = "ok" if evaluable else "abstain"
+    if posterior_rows:
+        posterior = np.asarray(posterior_rows, dtype=np.float64)
+        weights = posterior[:, 4]
+        empirical_coverage = float(np.average(posterior[:, 0], weights=weights))
+        speed_posterior = {
+            "nominal_coverage": 0.90,
+            "empirical_coverage": empirical_coverage,
+            "absolute_calibration_error": abs(empirical_coverage - 0.90),
+            "mean_interval_width_mps": float(np.average(posterior[:, 1], weights=weights)),
+            "mean_interval_score_90": float(np.average(posterior[:, 2], weights=weights)),
+            "mean_wis_90": float(np.average(posterior[:, 3], weights=weights)),
+            "count": int(len(posterior)),
+        }
+    else:
+        speed_posterior = {
+            "nominal_coverage": 0.90,
+            "empirical_coverage": None,
+            "absolute_calibration_error": None,
+            "mean_interval_width_mps": None,
+            "mean_interval_score_90": None,
+            "mean_wis_90": None,
+            "count": 0,
+        }
     return {
-        "protocol": "continuous-foresight-action-alignment-v1",
-        "status": status,
-        "coverage": float(evaluable / len(image_rows)),
+        "status": "ok" if evaluable else "abstain",
+        "coverage": float(evaluable / len(predicted_rows)),
         "evaluable_intervals": int(evaluable),
-        "total_intervals": int(len(image_rows)),
+        "total_intervals": int(len(predicted_rows)),
         "metrics": metrics,
-        "speed_posterior_coverage": None if not speed_interval_hits else float(np.mean(speed_interval_hits)),
+        "speed_posterior": speed_posterior,
+        "speed_posterior_coverage": speed_posterior["empirical_coverage"],
         "experimental_composite": None if not normalized else float(np.exp(-np.mean(normalized))),
         "experimental_composite_status": "calibration_only_not_formal_score",
         "tolerances": limits,
         "per_interval": per_interval,
+    }
+
+
+def compare_motion_profiles(
+    image_profile: dict[str, Any],
+    action_profile: dict[str, Any],
+    *,
+    include_uncertain: bool = False,
+    tolerances: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Compare image-derived and action-derived motion without text labels."""
+    if image_profile.get("source") != "image_only_candidate_blind_decoder":
+        raise ValueError("image_profile must be produced independently from action waypoints")
+    result = _compare_profile_rows(
+        image_profile,
+        action_profile,
+        image_profile,
+        include_uncertain=include_uncertain,
+        limits=_comparison_limits(tolerances),
+        score_speed_posterior=True,
+    )
+    return result | {
+        "protocol": "continuous-foresight-action-alignment-v1",
         "leakage_audit": {
             "image_source": image_profile.get("source"),
             "action_waypoint_visible_to_image_decoder": False,
             "candidate_bank_used": bool(image_profile.get("candidate_bank_used", True)),
         },
+    }
+
+
+def compare_history_baseline(
+    history_profile: dict[str, Any],
+    action_profile: dict[str, Any],
+    image_profile: dict[str, Any],
+    *,
+    include_uncertain: bool = False,
+    tolerances: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Score a history-only null on exactly the image probe's eligible rows."""
+    if history_profile.get("source") not in {
+        "history_only_constant_speed_yaw_rate",
+        "history_only_constant_acceleration_yaw_rate",
+    }:
+        raise ValueError("history_profile must be the frozen history-only null")
+    if image_profile.get("source") != "image_only_candidate_blind_decoder":
+        raise ValueError("image_profile must provide the eligibility mask")
+    result = _compare_profile_rows(
+        history_profile,
+        action_profile,
+        image_profile,
+        include_uncertain=include_uncertain,
+        limits=_comparison_limits(tolerances),
+        score_speed_posterior=False,
+    )
+    return result | {
+        "protocol": "history-only-action-null-v1",
+        "eligibility_mask_source": "image_probe_observability",
+    }
+
+
+def compare_future_control(
+    control_profile: dict[str, Any],
+    action_profile: dict[str, Any],
+    target_image_profile: dict[str, Any],
+    *,
+    include_uncertain: bool = False,
+    tolerances: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Score a corrupted/shuffled future on the target probe's eligible rows."""
+    if control_profile.get("source") != "image_only_candidate_blind_decoder":
+        raise ValueError("control_profile must originate from the image-only decoder")
+    if target_image_profile.get("source") != "image_only_candidate_blind_decoder":
+        raise ValueError("target_image_profile must provide the eligibility mask")
+    result = _compare_profile_rows(
+        control_profile,
+        action_profile,
+        target_image_profile,
+        include_uncertain=include_uncertain,
+        limits=_comparison_limits(tolerances),
+        score_speed_posterior=False,
+    )
+    return result | {
+        "protocol": "future-specificity-control-v1",
+        "eligibility_mask_source": "target_image_probe_observability",
+    }
+
+
+def foresight_gain(
+    image_comparison: dict[str, Any],
+    history_comparison: dict[str, Any],
+) -> dict[str, Any]:
+    """Return paired error reduction over the history-only null."""
+    if image_comparison.get("coverage") != history_comparison.get("coverage"):
+        raise ValueError("image and history comparisons must use the same eligibility mask")
+    metrics = {}
+    for field in MOTION_FIELDS:
+        image_mae = image_comparison["metrics"][field]["mae"]
+        history_mae = history_comparison["metrics"][field]["mae"]
+        if image_mae is None or history_mae is None:
+            metrics[field] = {
+                "image_mae": image_mae,
+                "history_mae": history_mae,
+                "absolute_gain": None,
+                "relative_gain": None,
+                "future_beats_history": None,
+            }
+            continue
+        gain = float(history_mae - image_mae)
+        metrics[field] = {
+            "image_mae": float(image_mae),
+            "history_mae": float(history_mae),
+            "absolute_gain": gain,
+            "relative_gain": float(gain / max(float(history_mae), 1e-6)),
+            "future_beats_history": gain > 0.0,
+        }
+    return {
+        "protocol": "foresight-gain-over-history-null-v1",
+        "definition": "history_only_mae_minus_image_future_mae",
+        "positive_means_future_adds_information": True,
+        "coverage": image_comparison.get("coverage"),
+        "metrics": metrics,
     }
 
 

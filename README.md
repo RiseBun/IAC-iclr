@@ -20,6 +20,11 @@ interpretation and stratification only.
 The converged method, data gates, 78-sample results, and GitHub-rendered flow
 chart are in [Continuous Foresight-Action Alignment V1](docs/CONTINUOUS_FORESIGHT_ALIGNMENT_V1_ZH.md).
 
+Current work is focused on [Level 1 Continuous Alignment V2](docs/LEVEL1_CONTINUOUS_ALIGNMENT_V2_ZH.md):
+continuous alignment must beat a strong history-only null, a history-speed
+matched shuffled future, and a time-reversed future before a motion component
+is accepted as carrying incremental foresight information.
+
 ![Converged IAC continuous foresight-action architecture](docs/figures/continuous_foresight_alignment_v1.svg)
 
 ## Method

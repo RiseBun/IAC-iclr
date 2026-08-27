@@ -1,0 +1,42 @@
+{
+  "protocol": "continuous-foresight-action-level1-v2",
+  "evidence_scope": "image_measurement_validation_only",
+  "formal_level1_evidence_eligible": false,
+  "data_protocol": "NAVSIM 78 samples, 4 future frames, 2 seconds, approximately 2 Hz",
+  "strict_evaluable_samples": 44,
+  "strict_total_samples": 78,
+  "component_status": {
+    "speed_mps": "failed",
+    "acceleration_mps2": "failed",
+    "lateral_speed_mps": "incremental_signal_resolved",
+    "yaw_rate_radps": "incremental_signal_resolved",
+    "curvature_1pm": "failed"
+  },
+  "speed": {
+    "image_mae_mps": 1.1401488062,
+    "gain_over_ca_cyr_history_mps": -0.8653111678,
+    "gain_95ci_mps": [-1.1557387275, -0.6205629047],
+    "matched_shuffle_lift_mps": 0.0130098610,
+    "matched_shuffle_lift_95ci_mps": [-0.1611394759, 0.1948962539],
+    "time_reversed_lift_mps": 0.0286588021,
+    "time_reversed_lift_95ci_mps": [-0.1091211097, 0.1777960299]
+  },
+  "yaw_rate": {
+    "image_mae_radps": 0.0128586019,
+    "gain_over_ca_cyr_history_radps": 0.0716041122,
+    "gain_95ci_radps": [0.0513003332, 0.0928342947],
+    "matched_shuffle_lift_radps": 0.2296421309,
+    "matched_shuffle_lift_95ci_radps": [0.1609085369, 0.3021562273],
+    "time_reversed_lift_radps": 0.0624148102,
+    "time_reversed_lift_95ci_radps": [0.0432873201, 0.0824006481]
+  },
+  "speed_posterior": {
+    "nominal_coverage": 0.9,
+    "empirical_coverage": 0.5136881920,
+    "absolute_calibration_error": 0.3863118080,
+    "mean_interval_width_mps": 0.8959438398,
+    "mean_wis_90": 0.6854872305,
+    "intervals": 135
+  },
+  "conclusion": "Lateral speed and yaw-rate pass the proxy incremental-information gate. Speed, acceleration, and curvature do not."
+}

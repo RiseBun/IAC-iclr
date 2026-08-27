@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,12 @@ from typing import Any
 import numpy as np
 
 from iac_new.continuous_motion import (
+    MOTION_FIELDS,
+    compare_future_control,
+    compare_history_baseline,
     compare_motion_profiles,
+    foresight_gain,
+    history_only_motion_profile,
     image_motion_profile,
     trajectory_to_motion_profile,
 )
@@ -49,16 +55,225 @@ def _reference(row: dict[str, Any], source: str) -> list[list[float]]:
     raise ValueError(f"{row.get('sample_id')}: logged GT candidate is missing")
 
 
-def _coarse_longitudinal(profile: dict[str, Any], threshold: float = 0.5) -> str:
-    values = [row.get("acceleration_mps2") for row in profile["rows"]]
-    finite = np.asarray([float(value) for value in values if value is not None and np.isfinite(value)])
-    mean = float(np.mean(finite)) if len(finite) else 0.0
-    return "decelerate" if mean < -threshold else ("accelerate" if mean > threshold else "cruise")
+def _level1_input_audit(row: dict[str, Any], reference_source: str) -> dict[str, Any]:
+    if reference_source != "action":
+        return {
+            "ready": False,
+            "issues": ["reference_is_not_native_wam_action_head"],
+        }
+    metadata = row.get("metadata") or {}
+    future_source = row.get("future_images_source") or metadata.get("future_images_source")
+    action_source = str(row.get("action_trajectory_source") or metadata.get("action_trajectory_source") or "").lower()
+    wam_model_id = row.get("wam_model_id") or metadata.get("wam_model_id")
+    issues = []
+    if future_source != "wam_generated":
+        issues.append("future_images_source_is_not_wam_generated")
+    if not action_source:
+        issues.append("missing_action_trajectory_source")
+    elif any(token in action_source for token in ("logged", "oracle", "proxy", "candidate")):
+        issues.append("action_trajectory_is_not_native_action_head")
+    if wam_model_id is None:
+        issues.append("missing_wam_model_id")
+    return {
+        "ready": not issues,
+        "issues": issues,
+        "future_images_source": future_source,
+        "action_trajectory_source": action_source or None,
+        "wam_model_id": wam_model_id,
+    }
+
+
+def _history_state(row: dict[str, Any]) -> list[list[float]]:
+    metadata = row.get("metadata") or {}
+    history = row.get("history_ego_state") or metadata.get("history_ego_state")
+    if not history:
+        raise ValueError(f"{row.get('sample_id')}: history_ego_state is required for the Level-1 null")
+    return history
+
+
+def _history_times(row: dict[str, Any], history_count: int) -> list[float]:
+    times = row.get("history_times_s")
+    if not times or len(times) != history_count:
+        raise ValueError(f"{row.get('sample_id')}: history_times_s must match history_ego_state")
+    return [float(value) for value in times]
+
+
+def _retime_profile(
+    profile: dict[str, Any],
+    target_times_s: list[float],
+    *,
+    reverse: bool = False,
+) -> dict[str, Any]:
+    result = copy.deepcopy(profile)
+    rows = list(result["rows"])
+    if reverse:
+        rows.reverse()
+    if len(rows) != len(target_times_s):
+        raise ValueError("control profile and target must have matching intervals")
+    previous = 0.0
+    for row, time_s in zip(rows, target_times_s):
+        row["time_s"] = float(time_s)
+        row["dt_s"] = float(time_s - previous)
+        previous = float(time_s)
+    result["rows"] = rows
+    return result
+
+
+def _gain(control: dict[str, Any], actual: dict[str, Any]) -> dict[str, Any]:
+    metrics = {}
+    for field in MOTION_FIELDS:
+        control_mae = control["metrics"][field]["mae"]
+        actual_mae = actual["metrics"][field]["mae"]
+        lift = None if control_mae is None or actual_mae is None else float(control_mae - actual_mae)
+        metrics[field] = {
+            "actual_future_mae": actual_mae,
+            "control_future_mae": control_mae,
+            "absolute_lift": lift,
+            "actual_beats_control": None if lift is None else lift > 0.0,
+        }
+    return {
+        "definition": "control_future_mae_minus_actual_future_mae",
+        "positive_means_future_is_specific": True,
+        "metrics": metrics,
+    }
+
+
+def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain: bool) -> None:
+    eligible = [record for record in records if record.get("comparison", {}).get("status") == "ok"]
+    for record in eligible:
+        candidates = [
+            other for other in eligible
+            if other["sample_id"] != record["sample_id"]
+            and len(other["future_times_s"]) == len(record["future_times_s"])
+        ]
+        target_speed = float(record["history_motion_profile"]["history_anchor"]["speed_mps"])
+        reversed_profile = _retime_profile(
+            record["image_motion_profile"], record["future_times_s"], reverse=True
+        )
+        reversed_result = compare_future_control(
+            reversed_profile,
+            record["reference_motion_profile"],
+            record["image_motion_profile"],
+            include_uncertain=include_uncertain,
+        )
+        matched_shuffle: dict[str, Any] = {
+            "status": "unavailable",
+            "reason": "no donor within 0.5 m/s history-speed caliper",
+        }
+        if candidates:
+            donor = min(
+                candidates,
+                key=lambda other: (
+                    abs(float(other["history_motion_profile"]["history_anchor"]["speed_mps"]) - target_speed),
+                    str(other["sample_id"]),
+                ),
+            )
+            speed_gap = abs(
+                float(donor["history_motion_profile"]["history_anchor"]["speed_mps"]) - target_speed
+            )
+            if speed_gap <= 0.5:
+                shuffled_profile = _retime_profile(
+                    donor["image_motion_profile"], record["future_times_s"]
+                )
+                shuffled = compare_future_control(
+                    shuffled_profile,
+                    record["reference_motion_profile"],
+                    record["image_motion_profile"],
+                    include_uncertain=include_uncertain,
+                )
+                matched_shuffle = {
+                    "status": "ok",
+                    "donor_sample_id": donor["sample_id"],
+                    "history_speed_gap_mps": speed_gap,
+                    "comparison": shuffled,
+                    "lift": _gain(shuffled, record["comparison"]),
+                }
+        record["specificity_controls"] = {
+            "status": "ok",
+            "matched_shuffle": matched_shuffle,
+            "time_reversed": {
+                "status": "ok",
+                "comparison": reversed_result,
+                "lift": _gain(reversed_result, record["comparison"]),
+            },
+        }
+
+
+def _mean_ci(values: list[float], rng: np.random.Generator) -> dict[str, Any]:
+    if not values:
+        return {"mean": None, "median": None, "confidence_interval_95": None, "samples": 0}
+    array = np.asarray(values, dtype=np.float64)
+    bootstrap = np.mean(rng.choice(array, size=(10000, len(array)), replace=True), axis=1)
+    return {
+        "mean": float(np.mean(array)),
+        "median": float(np.median(array)),
+        "confidence_interval_95": [float(value) for value in np.quantile(bootstrap, [0.025, 0.975])],
+        "samples": int(len(array)),
+    }
+
+
+def _incremental_evidence(valid: list[dict[str, Any]]) -> dict[str, Any]:
+    rng = np.random.default_rng(0)
+    output: dict[str, Any] = {"foresight_gain_over_history": {}, "future_specificity": {}}
+    for field in MOTION_FIELDS:
+        history_values = [
+            float(record["foresight_gain"]["metrics"][field]["absolute_gain"])
+            for record in valid
+            if record["foresight_gain"]["metrics"][field]["absolute_gain"] is not None
+        ]
+        output["foresight_gain_over_history"][field] = _mean_ci(history_values, rng) | {
+            "positive_fraction": None if not history_values else float(np.mean(np.asarray(history_values) > 0.0)),
+            "definition": "history_only_mae_minus_actual_future_mae",
+        }
+        controls = {}
+        for control_name in ("matched_shuffle", "time_reversed"):
+            values = [
+                float(record["specificity_controls"][control_name]["lift"]["metrics"][field]["absolute_lift"])
+                for record in valid
+                if record.get("specificity_controls", {}).get("status") == "ok"
+                and record["specificity_controls"].get(control_name, {}).get("status") == "ok"
+                and record["specificity_controls"][control_name]["lift"]["metrics"][field]["absolute_lift"] is not None
+            ]
+            controls[control_name] = _mean_ci(values, rng) | {
+                "positive_fraction": None if not values else float(np.mean(np.asarray(values) > 0.0)),
+                "definition": "control_future_mae_minus_actual_future_mae",
+            }
+        output["future_specificity"][field] = controls
+    donor_gaps = [
+        float(record["specificity_controls"]["matched_shuffle"]["history_speed_gap_mps"])
+        for record in valid
+        if record.get("specificity_controls", {}).get("matched_shuffle", {}).get("status") == "ok"
+    ]
+    output["matched_shuffle_audit"] = {
+        "matching_variables": ["history_speed_mps", "future_interval_count"],
+        "history_speed_caliper_mps": 0.5,
+        "action_or_future_reference_used_for_matching": False,
+        "mean_history_speed_gap_mps": None if not donor_gaps else float(np.mean(donor_gaps)),
+        "max_history_speed_gap_mps": None if not donor_gaps else float(np.max(donor_gaps)),
+    }
+    component_status = {}
+    for field in MOTION_FIELDS:
+        evidence = {
+            "beats_strong_history_null": output["foresight_gain_over_history"][field]["confidence_interval_95"],
+            "beats_matched_shuffle": output["future_specificity"][field]["matched_shuffle"]["confidence_interval_95"],
+            "uses_temporal_order": output["future_specificity"][field]["time_reversed"]["confidence_interval_95"],
+        }
+        checks = {
+            name: interval is not None and float(interval[0]) > 0.0
+            for name, interval in evidence.items()
+        }
+        component_status[field] = {
+            "incremental_signal_resolved": all(checks.values()),
+            "checks": checks,
+            "criterion": "lower bound of paired sample bootstrap 95% CI must exceed zero",
+        }
+    output["component_status"] = component_status
+    return output
 
 
 def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str, Any]:
     valid = [record for record in records if record.get("comparison", {}).get("status") == "ok"]
-    fields = ("speed_mps", "acceleration_mps2", "lateral_speed_mps", "yaw_rate_radps", "curvature_1pm")
+    fields = MOTION_FIELDS
     metrics: dict[str, Any] = {}
     for field in fields:
         values = [record["comparison"]["metrics"][field]["mae"] for record in valid]
@@ -71,13 +286,6 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
             "mean_within_tolerance": None if not within else float(np.mean(within)),
             "samples": len(values),
         }
-    coarse_agreement = [record["coarse_event_audit"]["agreement"] for record in valid]
-    same_event = [record for record in valid if record["coarse_event_audit"]["agreement"]]
-    same_event_large = [
-        record for record in same_event
-        if record["comparison"]["metrics"]["speed_mps"]["mae"]
-        > record["comparison"]["tolerances"]["speed_mps"]
-    ]
     protocol_records = [record for record in records if record.get("future_times_s")]
     frame_counts = sorted({len(record["future_times_s"]) for record in records})
     horizons = [float(record["future_times_s"][-1]) for record in protocol_records]
@@ -107,38 +315,85 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
                 "intervals": len(selected),
             })
         coverage_risk[field] = curve
+    posterior_rows = [
+        (
+            interval["speed_interval_contains_action"],
+            interval["speed_interval_width_mps"],
+            interval["speed_interval_score_90"],
+            interval["speed_wis_90"],
+            interval["observability"],
+        )
+        for record in valid
+        for interval in record["comparison"]["per_interval"]
+        if interval["evaluable"] and interval["speed_interval_contains_action"] is not None
+    ]
+    if posterior_rows:
+        posterior = np.asarray(posterior_rows, dtype=np.float64)
+        weights = np.maximum(posterior[:, 4], 1e-3)
+        empirical = float(np.average(posterior[:, 0], weights=weights))
+        speed_posterior = {
+            "nominal_coverage": 0.90,
+            "empirical_coverage": empirical,
+            "absolute_calibration_error": abs(empirical - 0.90),
+            "mean_interval_width_mps": float(np.average(posterior[:, 1], weights=weights)),
+            "mean_interval_score_90": float(np.average(posterior[:, 2], weights=weights)),
+            "mean_wis_90": float(np.average(posterior[:, 3], weights=weights)),
+            "intervals": int(len(posterior)),
+        }
+    else:
+        speed_posterior = {
+            "nominal_coverage": 0.90,
+            "empirical_coverage": None,
+            "absolute_calibration_error": None,
+            "mean_interval_width_mps": None,
+            "mean_interval_score_90": None,
+            "mean_wis_90": None,
+            "intervals": 0,
+        }
+    target_protocol_ready = bool(
+        frame_counts == [8] and horizons and all(abs(value - 4.0) <= 0.05 for value in horizons)
+    )
+    input_audit_ready = bool(records) and all(
+        record.get("level1_input_audit", {}).get("ready") is True for record in records
+    )
     return {
-        "protocol": "continuous-motion-measurement-validation-v1",
+        "protocol": "continuous-foresight-action-level1-v2",
         "evidence_scope": (
             "image_measurement_validation_only"
             if reference_source != "action"
             else "single_branch_image_action_alignment"
         ),
         "future_action_alignment_eligible": reference_source == "action",
+        "formal_level1_evidence_eligible": reference_source == "action" and target_protocol_ready and input_audit_ready,
+        "level1_input_audit": {
+            "ready": input_audit_ready,
+            "samples_ready": sum(record.get("level1_input_audit", {}).get("ready") is True for record in records),
+            "samples_total": len(records),
+        },
         "causal_claim_eligible": False,
         "samples_total": len(records),
         "samples_evaluable": len(valid),
         "samples_missing_decoder_score": sum(record.get("status") == "missing_decoder_score" for record in records),
         "mean_interval_coverage": None if not valid else float(np.mean([record["comparison"]["coverage"] for record in valid])),
         "metrics": metrics,
+        "metric_families": [
+            "continuous_alignment",
+            "foresight_gain_over_history",
+            "matched_shuffle_specificity",
+            "time_order_specificity",
+            "proper_speed_posterior",
+            "coverage_risk",
+        ],
+        "incremental_evidence": _incremental_evidence(valid),
         "coverage_risk_curve": coverage_risk,
-        "speed_posterior_coverage": None if not valid else float(np.mean([
-            record["comparison"]["speed_posterior_coverage"]
-            for record in valid if record["comparison"]["speed_posterior_coverage"] is not None
-        ])),
-        "coarse_event_information_loss_audit": {
-            "event_agreement": None if not coarse_agreement else float(np.mean(coarse_agreement)),
-            "same_event_samples": len(same_event),
-            "same_event_but_speed_mae_above_tolerance": len(same_event_large),
-            "fraction": None if not same_event else float(len(same_event_large) / len(same_event)),
-            "interpretation": "coarse events are diagnostic labels and do not replace continuous errors",
-        },
+        "speed_posterior": speed_posterior,
+        "speed_posterior_coverage": speed_posterior["empirical_coverage"],
         "observed_protocol": {
             "future_frame_counts": frame_counts,
             "future_horizon_s_min": None if not horizons else float(min(horizons)),
             "future_horizon_s_max": None if not horizons else float(max(horizons)),
             "median_interval_s": None if not intervals else float(np.median(intervals)),
-            "meets_target_8_frames_4_seconds": frame_counts == [8] and horizons and all(abs(value - 4.0) <= 0.05 for value in horizons),
+            "meets_target_8_frames_4_seconds": target_protocol_ready,
         },
         "failure_boundary": (
             "A single branch cannot establish counterfactual causality; paired controlled interventions are required."
@@ -169,6 +424,7 @@ def main() -> None:
                 "scene_id": row.get("scene_id"),
                 "future_times_s": list(row["future_times_s"]),
                 "reference_source": args.reference_source,
+                "level1_input_audit": _level1_input_audit(row, args.reference_source),
                 "status": "missing_decoder_score",
             })
             continue
@@ -178,29 +434,58 @@ def main() -> None:
         score = scores[sample_id]
         if score.get("candidate_bank_used_by_decoder") is not False:
             raise ValueError(f"{sample_id}: candidate-blind audit failed")
+        history_state = _history_state(row)
         initial_speed = _initial_speed(row)
         imagined = image_motion_profile(score["decoder"], times, initial_speed_mps=initial_speed)
         reference = trajectory_to_motion_profile(
             _reference(row, args.reference_source), times, initial_speed_mps=initial_speed
         )
+        history_times = _history_times(row, len(history_state))
+        history_cv_profile = history_only_motion_profile(history_state, times)
+        history_profile = history_only_motion_profile(
+            history_state,
+            times,
+            history_times_s=history_times,
+            model="constant_acceleration_yaw_rate",
+        )
         comparison = compare_motion_profiles(imagined, reference, include_uncertain=args.include_uncertain)
-        image_event = _coarse_longitudinal(imagined)
-        reference_event = _coarse_longitudinal(reference)
+        history_comparison = compare_history_baseline(
+            history_profile,
+            reference,
+            imagined,
+            include_uncertain=args.include_uncertain,
+        )
+        history_cv_comparison = compare_history_baseline(
+            history_cv_profile,
+            reference,
+            imagined,
+            include_uncertain=args.include_uncertain,
+        )
         records.append({
             "sample_id": sample_id,
             "scene_id": row.get("scene_id"),
             "future_times_s": times,
             "reference_source": args.reference_source,
+            "level1_input_audit": _level1_input_audit(row, args.reference_source),
             "image_motion_profile": imagined,
+            "history_motion_profile": history_profile,
+            "history_nulls": {
+                "primary": "constant_acceleration_yaw_rate",
+                "constant_speed_yaw_rate": {
+                    "profile": history_cv_profile,
+                    "comparison": history_cv_comparison,
+                },
+                "constant_acceleration_yaw_rate": {
+                    "profile": history_profile,
+                    "comparison": history_comparison,
+                },
+            },
             "reference_motion_profile": reference,
             "comparison": comparison,
-            "coarse_event_audit": {
-                "image_event": image_event,
-                "reference_event": reference_event,
-                "agreement": image_event == reference_event,
-                "primary_score": False,
-            },
+            "history_baseline_comparison": history_comparison,
+            "foresight_gain": foresight_gain(comparison, history_comparison),
         })
+    add_specificity_controls(records, include_uncertain=args.include_uncertain)
     report = {
         "summary": aggregate(records, args.reference_source),
         "records": records,

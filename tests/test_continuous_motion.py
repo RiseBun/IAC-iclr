@@ -3,13 +3,18 @@ import unittest
 import numpy as np
 
 from iac_new.continuous_motion import (
+    compare_future_control,
+    compare_history_baseline,
     compare_counterfactual_motion_deltas,
     compare_motion_profiles,
+    foresight_gain,
+    history_only_motion_profile,
     image_motion_profile,
     trajectory_to_motion_profile,
 )
 from iac_new.trajectory_decode import integrate_piecewise_controls
 from scripts.evaluate_counterfactual_continuous_alignment import audit_pair
+from scripts.evaluate_continuous_motion_alignment import _level1_input_audit
 
 
 def decoder(speeds: list[float], *, curvature: float = 0.0) -> dict:
@@ -56,7 +61,51 @@ class ContinuousMotionTest(unittest.TestCase):
         result = compare_motion_profiles(imagined, action)
         self.assertAlmostEqual(result["metrics"]["speed_mps"]["mae"], 1.0)
         self.assertEqual(result["coverage"], 1.0)
+        self.assertEqual(result["speed_posterior"]["empirical_coverage"], 0.0)
+        self.assertGreater(result["speed_posterior"]["mean_wis_90"], 0.0)
         self.assertFalse(result["leakage_audit"]["action_waypoint_visible_to_image_decoder"])
+
+    def test_history_null_uses_last_speed_and_yaw_rate(self) -> None:
+        profile = history_only_motion_profile(
+            [[-2.0, 0.0, 0.0, 4.0, 0.2], [0.0, 0.0, 0.0, 4.0, 0.2]],
+            [0.5, 1.0],
+        )
+        np.testing.assert_allclose([row["speed_mps"] for row in profile["rows"]], 4.0)
+        np.testing.assert_allclose([row["yaw_rate_radps"] for row in profile["rows"]], 0.2)
+        self.assertEqual(profile["source"], "history_only_constant_speed_yaw_rate")
+
+    def test_strong_history_null_uses_only_past_acceleration(self) -> None:
+        profile = history_only_motion_profile(
+            [[-3.0, 0.0, 0.0, 2.0, 0.0], [-1.5, 0.0, 0.0, 3.0, 0.0], [0.0, 0.0, 0.0, 4.0, 0.0]],
+            [0.5, 1.0],
+            history_times_s=[-1.0, -0.5, 0.0],
+            model="constant_acceleration_yaw_rate",
+        )
+        self.assertAlmostEqual(profile["history_anchor"]["acceleration_mps2"], 2.0)
+        np.testing.assert_allclose([row["speed_mps"] for row in profile["rows"]], [4.5, 5.5])
+        self.assertEqual(profile["source"], "history_only_constant_acceleration_yaw_rate")
+
+    def test_foresight_gain_uses_identical_image_eligibility(self) -> None:
+        times = [0.5, 1.0, 1.5, 2.0]
+        imagined = image_motion_profile(decoder([4.0] * 4), times, initial_speed_mps=3.0)
+        action = trajectory_to_motion_profile(decoder([4.0] * 4)["trajectory"], times, initial_speed_mps=3.0)
+        history = history_only_motion_profile([[0.0, 0.0, 0.0, 3.0, 0.0]], times)
+        image_result = compare_motion_profiles(imagined, action)
+        history_result = compare_history_baseline(history, action, imagined)
+        gain = foresight_gain(image_result, history_result)
+        self.assertEqual(image_result["coverage"], history_result["coverage"])
+        self.assertGreater(gain["metrics"]["speed_mps"]["absolute_gain"], 0.0)
+
+    def test_future_control_uses_target_observability_mask(self) -> None:
+        times = [0.5, 1.0, 1.5, 2.0]
+        target = decoder([4.0] * 4)
+        target["speed_support"][0]["status"] = "abstain"
+        target_profile = image_motion_profile(target, times)
+        control_profile = image_motion_profile(decoder([2.0] * 4), times)
+        action = trajectory_to_motion_profile(decoder([4.0] * 4)["trajectory"], times)
+        result = compare_future_control(control_profile, action, target_profile)
+        self.assertEqual(result["coverage"], 0.75)
+        self.assertEqual(result["eligibility_mask_source"], "target_image_probe_observability")
 
     def test_abstained_intervals_do_not_count_as_failures(self) -> None:
         value = decoder([4.0] * 4)
@@ -92,6 +141,17 @@ class ContinuousMotionTest(unittest.TestCase):
         self.assertEqual(audit_pair("group-1", {"clear": clear, "risk": risk}), [])
         del risk["nuisance_seed"]
         self.assertIn("missing_nuisance_seed", audit_pair("group-1", {"clear": clear, "risk": risk}))
+
+    def test_level1_input_audit_requires_native_wam_outputs(self) -> None:
+        row = {
+            "future_images_source": "wam_generated",
+            "action_trajectory_source": "native_action_head",
+            "wam_model_id": "wam-1",
+        }
+        self.assertTrue(_level1_input_audit(row, "action")["ready"])
+        self.assertFalse(_level1_input_audit(row, "logged_gt")["ready"])
+        row["action_trajectory_source"] = "logged_candidate_proxy"
+        self.assertFalse(_level1_input_audit(row, "action")["ready"])
 
 
 if __name__ == "__main__":
