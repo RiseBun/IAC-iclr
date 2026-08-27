@@ -297,3 +297,6 @@ The first same-split V5 speed enhancement is documented in [Level 1 longitudinal
 V5 result](docs/LEVEL1_LONGITUDINAL_V5_CURVATURE_20260827_ZH.md). It adds a
 low-frequency second-difference penalty to the history-anchored residual while
 preserving the V4 configuration as a separate baseline.
+
+The latest server-side WAM output readiness audit is recorded in
+[WAM Level-1 Output Readiness (Chinese)](docs/WAM_LEVEL1_OUTPUT_READINESS_20260827_ZH.md).
