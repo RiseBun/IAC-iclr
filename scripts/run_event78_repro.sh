@@ -45,4 +45,11 @@ nvidia-smi -q > "${RUN_DIR}/NVIDIA_SMI.txt"
   --output "${RUN_DIR}/event_metrics.json" \
   | tee "${RUN_DIR}/event.log"
 
+"${PYTHON_BIN}" "${ROOT}/scripts/evaluate_continuous_motion_alignment.py" \
+  --manifest "${RUN_MANIFEST}" \
+  --scores "${RUN_DIR}/raft_scores.jsonl" \
+  --reference-source logged_gt \
+  --output "${RUN_DIR}/continuous_motion_strict.json" \
+  | tee "${RUN_DIR}/continuous_motion.log"
+
 echo "${RUN_DIR}"

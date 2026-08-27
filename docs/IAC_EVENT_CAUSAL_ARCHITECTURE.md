@@ -1,5 +1,9 @@
 # IAC Event-Causal Architecture
 
+> **Status: secondary interpretation layer.** The current primary architecture
+> compares continuous image-derived ego motion directly with action waypoint
+> motion. See [Continuous Foresight-Action Alignment V1](CONTINUOUS_FORESIGHT_ALIGNMENT_V1_ZH.md).
+
 ## Objective
 
 IAC is an image-side evidence model for WAM evaluation. Its output is not a

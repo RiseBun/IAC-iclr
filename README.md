@@ -1,19 +1,24 @@
-# IAC: Event-Causal Evaluation for World Action Models
+# IAC: Continuous Foresight-Action Evaluation for World Action Models
 
 IAC asks a narrower and more causal question than video quality or task
 success alone:
 
-> Did the action-conditioned imagined future express the intended event, and
-> did the planner actually use that future when choosing an action?
+> Does the ego-motion imagined in the future video agree with the action head,
+> and do both respond consistently under a controlled intervention?
 
-The benchmark does not reconstruct an exact metric trajectory from monocular
-front-view video. It extracts observable maneuver events and evaluates three
-links separately:
+The primary representation is a continuous ego-motion profile, not a recovered
+global trajectory and not a text event:
 
 ```text
-conditioned action -> imagined event -> selected action -> realized event/success
-        Event-CC              FUI                 Event-FCS
+m(t) = [speed, acceleration, lateral speed, yaw rate, curvature]
 ```
+
+The image branch is candidate-blind: action waypoints are withheld until the
+future-image motion profile has been decoded. Events are derived afterward for
+interpretation and stratification only.
+
+The converged method, data gates, 78-sample results, and GitHub-rendered flow
+chart are in [Continuous Foresight-Action Alignment V1](docs/CONTINUOUS_FORESIGHT_ALIGNMENT_V1_ZH.md).
 
 ## Method
 
@@ -26,14 +31,15 @@ history + imagined front-camera frames
   -> calibrated ground-plane ego geometry
   -> candidate-blind continuous motion decoder
   -> observability and abstention
-  -> maneuver skeleton
-  -> interval event posterior
+  -> continuous ego-motion posterior
+  -> direct comparison with action-waypoint kinematics
+  -> event interpretation layer
 ```
 
-V1's formal primary signal is lateral event support: `keep_lane`, `turn_left`,
-and `turn_right`. Metric speed and exact trajectory recovery are not primary
-claims. Optional depth, DINOv2, semantic, CoTracker, and SEA-RAFT modules remain
-research ablations; they are not part of the reported 78-sample default.
+V1 reports speed, acceleration, lateral speed, yaw rate, and curvature together
+with observability, abstention, posterior coverage, and coverage-risk curves.
+RAFT-Large remains the default because it completed 78/78 samples; SEA-RAFT is
+a challenger. Their paired speed difference is not statistically resolved.
 
 For interaction events, an actor-relative extension adds instance association,
 calibrated ground-contact/depth projection, robust temporal fitting, metric
@@ -41,17 +47,16 @@ distance and closing/lateral speed intervals, TTC, observability, and
 abstention. It is implemented and synthetically tested, but is not yet a
 formally validated 78-sample metric.
 
-## Three evaluation levels
+## Evaluation levels
 
-1. **Level 1, action response:** fixed history, common generation seed, at
-   least three materially distinct action branches, and a full K-by-K
-   image-event/action-event matrix.
-2. **Level 2, Event-CC + Event-FCS:** adds independently measured realized
-   events and an explicit task-success boolean. FCS is always reported with
-   foresight coverage and Joint-FCS.
-3. **Level 3, causal closure (FUI):** reruns one fixed planner while permuting
-   imagined futures across action slots. Planner identity and nuisance seed are
-   held fixed, and independent null resamples measure stochastic action changes.
+1. **Level 0, measurement validity:** compare image-derived motion with an
+   independent logged trajectory; this validates the probe, not WAM causality.
+2. **Level 1, continuous future-action alignment:** compare `m_F(t)` from the
+   generated future with `m_A(t)` from the held-out action head.
+3. **Level 2, counterfactual consistency:** for paired risk/clear interventions,
+   compare `Delta m_F(t)` with `Delta m_A(t)` under a fixed history and seed.
+4. **Level 3, causal closure and FCS:** add planner future-swap reruns,
+   independently realized state, and explicit task success.
 
 The readiness audit is fail-closed. Diagnostic decoded-trajectory adapters are
 tagged with a non-formal evidence source and cannot silently enter the formal
@@ -70,6 +75,30 @@ The RAFT image probe requires CUDA for practical evaluation. Event metrics and
 their synthetic tests run on CPU.
 
 ## Benchmark workflow
+
+Validate continuous motion on held-out logged waypoints:
+
+```bash
+PYTHONPATH=src:. python scripts/evaluate_continuous_motion_alignment.py \
+  --manifest event78_manifest.jsonl \
+  --scores raft_scores.jsonl \
+  --reference-source logged_gt \
+  --output continuous_motion.json
+```
+
+Evaluate true paired WAM counterfactuals only when both generated-image decoder
+outputs and action-head trajectories are present:
+
+```bash
+PYTHONPATH=src:. python scripts/evaluate_counterfactual_continuous_alignment.py \
+  --records wam_counterfactual_branches.jsonl \
+  --require-eight-frame-four-second \
+  --require-ready \
+  --output counterfactual_continuous.json
+```
+
+The event-oriented commands below remain available as secondary interpretation
+and legacy controls.
 
 Audit the data contract and freeze a scene-disjoint calibration/holdout split:
 

@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Evaluate paired risk/clear WAM branches in continuous motion space."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from iac_new.continuous_motion import (
+    compare_counterfactual_motion_deltas,
+    image_motion_profile,
+    trajectory_to_motion_profile,
+)
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    with path.open("r", encoding="utf-8") as stream:
+        return [json.loads(line) for line in stream if line.strip()]
+
+
+def audit_pair(group_id: str, roles: dict[str, dict[str, Any]]) -> list[str]:
+    issues = []
+    for field in ("history_fingerprint", "wam_model_id", "nuisance_seed"):
+        values = [roles[role].get(field) for role in ("clear", "risk")]
+        if any(value is None for value in values):
+            issues.append(f"missing_{field}")
+        elif values[0] != values[1]:
+            issues.append(f"mismatched_{field}")
+    for role, row in roles.items():
+        if row.get("future_images_source") != "wam_generated":
+            issues.append(f"{role}_future_not_wam_generated")
+        source = str(row.get("action_trajectory_source") or "").lower()
+        if not source:
+            issues.append(f"{role}_missing_action_trajectory_source")
+        elif any(token in source for token in ("logged", "oracle", "proxy", "candidate")):
+            issues.append(f"{role}_non_native_action_source")
+        if row.get("candidate_bank_used_by_decoder") is not False:
+            issues.append(f"{role}_candidate_blind_audit_failed")
+    clear_times = np.asarray(roles["clear"].get("future_times_s") or [], dtype=np.float64)
+    risk_times = np.asarray(roles["risk"].get("future_times_s") or [], dtype=np.float64)
+    if clear_times.shape != risk_times.shape or not np.allclose(clear_times, risk_times, atol=1e-6, rtol=0.0):
+        issues.append("mismatched_future_timestamps")
+    clear_action = np.asarray(roles["clear"].get("action_trajectory") or [], dtype=np.float64)
+    risk_action = np.asarray(roles["risk"].get("action_trajectory") or [], dtype=np.float64)
+    if clear_action.shape != risk_action.shape or clear_action.ndim != 2 or clear_action.shape[1:] != (3,):
+        issues.append("invalid_or_mismatched_action_trajectories")
+    elif float(np.max(np.abs(clear_action - risk_action))) <= 1e-4:
+        issues.append("action_intervention_has_no_effect")
+    if not group_id or group_id == "None":
+        issues.append("missing_counterfactual_group_id")
+    return sorted(set(issues))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--records", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--require-eight-frame-four-second", action="store_true")
+    parser.add_argument("--require-ready", action="store_true")
+    args = parser.parse_args()
+
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in read_jsonl(args.records):
+        groups[str(row.get("counterfactual_group_id"))].append(row)
+    reports = []
+    for group_id, branches in sorted(groups.items()):
+        roles = {str(row.get("branch_role")): row for row in branches}
+        if set(roles) != {"clear", "risk"}:
+            raise ValueError(f"{group_id}: exactly one clear and one risk branch are required")
+        issues = audit_pair(group_id, roles)
+        if args.require_ready and issues:
+            raise ValueError(f"{group_id}: counterfactual readiness failed: {issues}")
+        profiles = {}
+        for role, row in roles.items():
+            times = list(row.get("future_times_s") or [])
+            if args.require_eight_frame_four_second and (len(times) != 8 or abs(float(times[-1]) - 4.0) > 0.05):
+                raise ValueError(f"{group_id}/{role}: expected 8 frames ending at 4.0 seconds")
+            if row.get("candidate_bank_used_by_decoder") is not False:
+                raise ValueError(f"{group_id}/{role}: candidate-blind audit failed")
+            history = row.get("history_ego_state") or []
+            initial_speed = float(history[-1][3]) if history and len(history[-1]) >= 4 else None
+            profiles[role] = (
+                image_motion_profile(row.get("decoder") or {}, times, initial_speed_mps=initial_speed),
+                trajectory_to_motion_profile(row.get("action_trajectory"), times, initial_speed_mps=initial_speed),
+            )
+        reports.append({
+            "counterfactual_group_id": group_id,
+            "causal_claim_eligible": not issues,
+            "readiness_issues": issues,
+            "comparison": compare_counterfactual_motion_deltas(
+                profiles["clear"][0], profiles["risk"][0], profiles["clear"][1], profiles["risk"][1]
+            ),
+        })
+    output = {
+        "protocol": "counterfactual-continuous-alignment-report-v1",
+        "groups": len(reports),
+        "causal_claim_eligible": bool(reports) and all(row["causal_claim_eligible"] for row in reports),
+        "reports": reports,
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(output, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(json.dumps({key: value for key, value in output.items() if key != "reports"}, indent=2))
+
+
+if __name__ == "__main__":
+    main()
