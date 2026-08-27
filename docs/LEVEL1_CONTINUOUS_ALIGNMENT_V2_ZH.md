@@ -39,6 +39,17 @@ s_A(t) = action-side forward displacement
 进入 abstention，不强行产生速度结论。速度和加速度仍由平滑位移派生，作为更高阶、
 更脆弱的指标。
 
+因此 Level-1 的主比较对象是逐时刻平面位姿：
+
+```text
+P_F(t) = [x_F(t), y_F(t), heading_F(t)]
+P_A(t) = [x_A(t), y_A(t), heading_A(t)]
+```
+
+报告 `translation_mae`、前向/横向误差、heading 误差、终点误差和 path cosine。
+这组 `SE(2)` 指标在尺度可靠时使用米制；尺度不可靠时只对平移部分独立归一化，
+heading 保持弧度单位。它比单独的 speed MAE 更接近“轨迹与图像是否一致”的原始问题。
+
 ## 3. 三个必要证据
 
 ### 3.1 Continuous Alignment

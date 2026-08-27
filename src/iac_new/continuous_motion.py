@@ -717,6 +717,93 @@ def compare_distance_profiles(
     }
 
 
+def compare_pose_profiles(
+    image_profile: dict[str, Any],
+    action_profile: dict[str, Any],
+    *,
+    scale_mode: str = "metric",
+    include_uncertain: bool = False,
+) -> dict[str, Any]:
+    """Compare the time-indexed planar pose ``[x, y, heading]``."""
+    if image_profile.get("source") not in IMAGE_PROFILE_SOURCES:
+        raise ValueError("image_profile must be produced independently from action waypoints")
+    if scale_mode not in {"metric", "scale_free"}:
+        raise ValueError("scale_mode must be metric or scale_free")
+    predicted_rows = list(image_profile.get("rows") or [])
+    action_rows = list(action_profile.get("rows") or [])
+    if not predicted_rows or len(predicted_rows) != len(action_rows):
+        raise ValueError("pose profiles must have matching non-empty rows")
+    predicted = np.asarray([[float(row["progress_m"]), float(row["lateral_offset_m"]), float(row["heading_rad"])] for row in predicted_rows], dtype=np.float64)
+    action = np.asarray([[float(row["progress_m"]), float(row["lateral_offset_m"]), float(row["heading_rad"])] for row in action_rows], dtype=np.float64)
+    if not np.all(np.isfinite(predicted)) or not np.all(np.isfinite(action)):
+        raise ValueError("pose values must be finite")
+    scale_ratio = None
+    if scale_mode == "scale_free":
+        predicted_scale = float(np.max(np.linalg.norm(predicted[:, :2], axis=1)))
+        action_scale = float(np.max(np.linalg.norm(action[:, :2], axis=1)))
+        if predicted_scale < 0.5 or action_scale < 0.5:
+            return {
+                "protocol": "continuous-se2-pose-alignment-v1",
+                "scale_mode": scale_mode,
+                "status": "abstain",
+                "coverage": 0.0,
+                "evaluable_intervals": 0,
+                "total_intervals": len(predicted_rows),
+                "reason": "translation_amplitude_too_small_for_scale_free_pose",
+                "metrics": {"se2_pose": {"translation_mae": None, "forward_mae": None, "lateral_mae": None, "heading_mae_rad": None, "endpoint_translation_error": None, "endpoint_heading_error_rad": None, "path_cosine": None, "count": 0}},
+            }
+        scale_ratio = predicted_scale / action_scale
+        predicted[:, :2] /= predicted_scale
+        action[:, :2] /= action_scale
+    allowed = {"usable", "uncertain"} if include_uncertain else {"usable"}
+    valid = [index for index, row in enumerate(predicted_rows) if str(row.get("status", "abstain")) in allowed]
+    if not valid:
+        return {
+            "protocol": "continuous-se2-pose-alignment-v1",
+            "scale_mode": scale_mode,
+            "status": "abstain",
+            "coverage": 0.0,
+            "evaluable_intervals": 0,
+            "total_intervals": len(predicted_rows),
+            "independent_translation_scale_ratio": scale_ratio,
+            "metrics": {"se2_pose": {"translation_mae": None, "forward_mae": None, "lateral_mae": None, "heading_mae_rad": None, "endpoint_translation_error": None, "endpoint_heading_error_rad": None, "path_cosine": None, "count": 0}},
+        }
+    translation_error = np.linalg.norm(predicted[valid, :2] - action[valid, :2], axis=1)
+    forward_error = np.abs(predicted[valid, 0] - action[valid, 0])
+    lateral_error = np.abs(predicted[valid, 1] - action[valid, 1])
+    heading_error = np.abs(_wrapped_delta(predicted[valid, 2] - action[valid, 2]))
+    predicted_xy = predicted[valid, :2].reshape(-1)
+    action_xy = action[valid, :2].reshape(-1)
+    xy_norms = np.linalg.norm(predicted_xy) * np.linalg.norm(action_xy)
+    cosine = float(np.dot(predicted_xy, action_xy) / xy_norms) if xy_norms > 1e-9 else None
+    last = valid[-1]
+    metric = {
+        "translation_mae": float(np.mean(translation_error)),
+        "forward_mae": float(np.mean(forward_error)),
+        "lateral_mae": float(np.mean(lateral_error)),
+        "heading_mae_rad": float(np.mean(heading_error)),
+        "endpoint_translation_error": float(np.linalg.norm(predicted[last, :2] - action[last, :2])) if last == len(predicted) - 1 else None,
+        "endpoint_heading_error_rad": float(abs(_wrapped_delta(predicted[last, 2] - action[last, 2]))) if last == len(predicted) - 1 else None,
+        "path_cosine": cosine,
+        "count": len(valid),
+    }
+    return {
+        "protocol": "continuous-se2-pose-alignment-v1",
+        "scale_mode": scale_mode,
+        "status": "ok",
+        "coverage": float(len(valid) / len(predicted_rows)),
+        "evaluable_intervals": len(valid),
+        "total_intervals": len(predicted_rows),
+        "independent_translation_scale_ratio": scale_ratio,
+        "metrics": {"se2_pose": metric},
+        "leakage_audit": {
+            "image_source": image_profile.get("source"),
+            "action_waypoint_visible_to_image_decoder": False,
+            "action_used_for_image_scale": False,
+        },
+    }
+
+
 def compare_history_baseline(
     history_profile: dict[str, Any],
     action_profile: dict[str, Any],

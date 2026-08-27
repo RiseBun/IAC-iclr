@@ -18,6 +18,7 @@ from iac_new.continuous_motion import (
     compare_longitudinal_behavior,
     compare_motion_profiles,
     compare_distance_profiles,
+    compare_pose_profiles,
     foresight_gain,
     history_anchored_residual_motion_profile,
     history_only_motion_profile,
@@ -472,6 +473,30 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
             "sample_mean_curve_cosine": None if not cosines else float(np.mean(cosines)),
             "unit": "m" if mode == "metric" else "normalized_max_abs_forward_displacement",
         }
+    pose_summary: dict[str, Any] = {}
+    for mode, record_key in (
+        ("metric", "pose_alignment_metric"),
+        ("scale_free", "pose_alignment_scale_free"),
+    ):
+        pose_records = [
+            record.get(record_key, {}) for record in records
+            if record.get(record_key, {}).get("status") == "ok"
+        ]
+        pose_metrics = [record.get("metrics", {}).get("se2_pose", {}) for record in pose_records]
+        def mean_value(key: str) -> float | None:
+            values = [float(item[key]) for item in pose_metrics if item.get(key) is not None]
+            return None if not values else float(np.mean(values))
+        pose_summary[mode] = {
+            "samples": len(pose_records),
+            "sample_mean_translation_mae": mean_value("translation_mae"),
+            "sample_mean_forward_mae": mean_value("forward_mae"),
+            "sample_mean_lateral_mae": mean_value("lateral_mae"),
+            "sample_mean_heading_mae_rad": mean_value("heading_mae_rad"),
+            "sample_mean_endpoint_translation_error": mean_value("endpoint_translation_error"),
+            "sample_mean_endpoint_heading_error_rad": mean_value("endpoint_heading_error_rad"),
+            "sample_mean_path_cosine": mean_value("path_cosine"),
+            "unit": "m/rad" if mode == "metric" else "normalized_translation/rad",
+        }
     behavior_rows = [record.get("longitudinal_behavior") for record in valid if record.get("longitudinal_behavior")]
     behavior = {
         "delta_speed_mae_mps": None if not behavior_rows else float(np.mean([row["delta_speed_mae_mps"] for row in behavior_rows])),
@@ -529,6 +554,7 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
         "metrics": metrics,
         "raw_absolute_image_metrics": raw_metrics,
         "forward_distance_alignment": distance_summary,
+        "se2_pose_alignment": pose_summary,
         "longitudinal_behavior": behavior,
         "longitudinal_model_protocols": sorted(longitudinal_models),
         "metric_families": [
@@ -644,6 +670,12 @@ def main() -> None:
         distance_alignment_scale_free = compare_distance_profiles(
             imagined, reference, scale_mode="scale_free", include_uncertain=args.include_uncertain
         )
+        pose_alignment_metric = compare_pose_profiles(
+            imagined, reference, scale_mode="metric", include_uncertain=args.include_uncertain
+        )
+        pose_alignment_scale_free = compare_pose_profiles(
+            imagined, reference, scale_mode="scale_free", include_uncertain=args.include_uncertain
+        )
         raw_comparison = compare_motion_profiles(
             raw_imagined, reference, include_uncertain=args.include_uncertain
         )
@@ -695,6 +727,8 @@ def main() -> None:
             "comparison": comparison,
             "distance_alignment_metric": distance_alignment_metric,
             "distance_alignment_scale_free": distance_alignment_scale_free,
+            "pose_alignment_metric": pose_alignment_metric,
+            "pose_alignment_scale_free": pose_alignment_scale_free,
             "raw_image_comparison": raw_comparison,
             "longitudinal_behavior": longitudinal_behavior,
             "history_longitudinal_behavior": history_longitudinal_behavior,

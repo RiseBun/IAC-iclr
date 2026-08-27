@@ -9,6 +9,7 @@ from iac_new.continuous_motion import (
     compare_counterfactual_motion_deltas,
     compare_motion_profiles,
     compare_distance_profiles,
+    compare_pose_profiles,
     foresight_gain,
     history_anchored_residual_motion_profile,
     history_only_motion_profile,
@@ -83,6 +84,22 @@ class ContinuousMotionTest(unittest.TestCase):
         shape = compare_distance_profiles(imagined, action, scale_mode="scale_free")
         assert metric["metrics"]["forward_displacement_profile"]["mae"] > 0.0
         assert shape["metrics"]["forward_displacement_profile"]["mae"] == 0.0
+        assert shape["leakage_audit"]["action_used_for_image_scale"] is False
+
+    def test_pose_alignment_compares_forward_lateral_and_heading(self) -> None:
+        times = [0.5, 1.0, 1.5, 2.0]
+        imagined = image_motion_profile(decoder([4.0] * 4, curvature=0.02), times, initial_speed_mps=4.0)
+        action = trajectory_to_motion_profile(
+            integrate_piecewise_controls(
+                np.asarray(times), speeds_mps=np.full(4, 5.0), curvatures_1pm=np.full(4, 0.02)
+            ),
+            times,
+            initial_speed_mps=4.0,
+        )
+        metric = compare_pose_profiles(imagined, action, scale_mode="metric")
+        shape = compare_pose_profiles(imagined, action, scale_mode="scale_free")
+        assert metric["metrics"]["se2_pose"]["forward_mae"] > 0.0
+        assert shape["metrics"]["se2_pose"]["path_cosine"] > 0.99
         assert shape["leakage_audit"]["action_used_for_image_scale"] is False
 
     def test_history_null_uses_last_speed_and_yaw_rate(self) -> None:
