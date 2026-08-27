@@ -22,7 +22,12 @@ from iac_new.road_structure import build_road_structure, extract_road_boundaries
 from iac_new.scoring import interval_observability, polygon_mask
 from iac_new.trajectory_decode import compare_continuous_trajectory, decode_continuous_trajectory
 from iac_new.continuous_motion import history_only_motion_profile
-from iac_new.temporal_geometry import RoadStateFilter, TemporalScaleCalibrator, fit_causal_road_plane
+from iac_new.temporal_geometry import (
+    RoadStateFilter,
+    TemporalScaleCalibrator,
+    estimate_history_flow_scale,
+    fit_causal_road_plane,
+)
 from iac_new.temporal_geometry import HomographyBoundaryPropagator
 from iac_new.flow_reliability import FlowReliabilityFusion, calibrate_historical_flow_bias, calibrate_historical_row_bias
 
@@ -94,6 +99,33 @@ def evaluate_record(record: dict[str, Any], extractor: RaftFlowExtractor, config
     refinement_uncertainty = None if flow.refinement_uncertainty is None else flow.refinement_uncertainty[future_start:]
     consistency = None if flow.consistency_masks is None else flow.consistency_masks[future_start:]
     roi = polygon_mask(height, width, config["mask"]["polygon_normalized"])
+    persistent_scale = None
+    persistent_scale_cfg = config.get("persistent_scale_calibration", {})
+    if bool(persistent_scale_cfg.get("enabled", False)):
+        history_state = record.get("metadata", {}).get("history_ego_state")
+        if history_state is not None and future_start >= 1:
+            try:
+                persistent_scale = estimate_history_flow_scale(
+                    history_flows=flow.forward[:future_start],
+                    history_ego_state=np.asarray(history_state, dtype=np.float64),
+                    history_times_s=np.asarray(record.get("history_times_s", []), dtype=np.float64),
+                    camera_to_ego=record["camera_to_ego"],
+                    intrinsics=flow.intrinsics,
+                    roi_mask=roi,
+                    consistency_masks=(
+                        None if flow.consistency_masks is None
+                        else flow.consistency_masks[:future_start]
+                    ),
+                    min_flow_px=float(persistent_scale_cfg.get("min_flow_px", 0.5)),
+                    max_points=int(persistent_scale_cfg.get("max_points", 1600)),
+                    min_predicted_flow_px=float(persistent_scale_cfg.get("min_predicted_flow_px", 0.25)),
+                )
+                if persistent_scale.get("available"):
+                    observed = np.asarray(observed, dtype=np.float32) * float(
+                        persistent_scale["future_flow_correction"]
+                    )
+            except (ValueError, np.linalg.LinAlgError) as error:
+                persistent_scale = {"available": False, "error": str(error)}
     support_weights = np.ones(observed.shape[:-1], dtype=np.float32)
     uncertainty_stats = None
     if refinement_uncertainty is not None:
@@ -609,6 +641,7 @@ def evaluate_record(record: dict[str, Any], extractor: RaftFlowExtractor, config
         "ego_frame_boundary_fusion": ego_frame_boundary_fusion,
         "boundary_propagation": boundary_propagation,
         "temporal_scale_calibration": temporal_scale,
+        "persistent_scale_calibration": persistent_scale,
         "flow_reliability": None if flow_reliability is None else {
             key: value for key, value in flow_reliability.items() if key not in {"weights", "photometric_weights", "tile_weights", "repaired_flows"}
         } | {"decoder_blend_alpha": float(np.clip(reliability_cfg.get("decoder_blend_alpha", 0.0), 0.0, 1.0))},
