@@ -26,6 +26,19 @@ m(t) = [v(t), a(t), v_lat(t), yaw_rate(t), curvature(t)]
 
 图像分支必须在读取 action waypoint 前完成，输出 `m_F(t)`、observability、abstention 和速度 `q05/q50/q95`。action waypoint 随后通过确定性运动学变换得到 `m_A(t)`。
 
+速度不是唯一的纵向输出。Level-1 同时报告前向位移曲线：
+
+```text
+s_F(t) = image-side forward displacement
+s_A(t) = action-side forward displacement
+```
+
+有可靠尺度时比较米制 `s_F`；尺度不稳定时，图像和 action 各自用本身的最大
+前向位移归一化，比较 `s_F / max|s_F|` 与 `s_A / max|s_A|` 的时间形状。归一化
+只发生在比较边界，不能用 action 分支给图像分支校准尺度。终点幅度过小的样本
+进入 abstention，不强行产生速度结论。速度和加速度仍由平滑位移派生，作为更高阶、
+更脆弱的指标。
+
 ## 3. 三个必要证据
 
 ### 3.1 Continuous Alignment

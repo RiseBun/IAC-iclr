@@ -302,3 +302,5 @@ The independent 25-window holdout replication is documented in
 
 The latest server-side WAM output readiness audit is recorded in
 [WAM Level-1 Output Readiness (Chinese)](docs/WAM_LEVEL1_OUTPUT_READINESS_20260827_ZH.md).
+Level-1 also exposes metric and scale-free forward-distance alignment; see
+[the continuous alignment protocol](docs/LEVEL1_CONTINUOUS_ALIGNMENT_V2_ZH.md).

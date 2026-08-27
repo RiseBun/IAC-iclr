@@ -617,6 +617,106 @@ def compare_motion_profiles(
     }
 
 
+def compare_distance_profiles(
+    image_profile: dict[str, Any],
+    action_profile: dict[str, Any],
+    *,
+    scale_mode: str = "metric",
+    include_uncertain: bool = False,
+) -> dict[str, Any]:
+    """Compare forward displacement, with a scale-free fallback.
+
+    ``metric`` compares the independently recovered forward displacement in
+    metres. ``scale_free`` normalizes each profile by its own terminal forward
+    displacement, so it evaluates temporal shape without borrowing scale from
+    the action branch.
+    """
+    if image_profile.get("source") not in IMAGE_PROFILE_SOURCES:
+        raise ValueError("image_profile must be produced independently from action waypoints")
+    if scale_mode not in {"metric", "scale_free"}:
+        raise ValueError("scale_mode must be metric or scale_free")
+    predicted_rows = list(image_profile.get("rows") or [])
+    action_rows = list(action_profile.get("rows") or [])
+    if not predicted_rows or len(predicted_rows) != len(action_rows):
+        raise ValueError("distance profiles must have matching non-empty rows")
+    predicted = np.asarray([float(row["progress_m"]) for row in predicted_rows], dtype=np.float64)
+    action = np.asarray([float(row["progress_m"]) for row in action_rows], dtype=np.float64)
+    if not np.all(np.isfinite(predicted)) or not np.all(np.isfinite(action)):
+        raise ValueError("forward displacement must be finite")
+    scale_ratio = None
+    if scale_mode == "scale_free":
+        predicted_scale = float(np.max(np.abs(predicted)))
+        action_scale = float(np.max(np.abs(action)))
+        if predicted_scale < 0.5 or action_scale < 0.5:
+            return {
+                "protocol": "continuous-forward-distance-alignment-v1",
+                "scale_mode": scale_mode,
+                "status": "abstain",
+                "coverage": 0.0,
+                "evaluable_intervals": 0,
+                "total_intervals": len(predicted_rows),
+                "reason": "forward_displacement_amplitude_too_small_for_scale_free_profile",
+                "metrics": {"forward_displacement_profile": {"mae": None, "rmse": None, "endpoint_abs_error": None, "increment_mae": None, "curve_cosine": None, "count": 0}},
+            }
+        scale_ratio = predicted_scale / action_scale
+        predicted = predicted / predicted_scale
+        action = action / action_scale
+    allowed = {"usable", "uncertain"} if include_uncertain else {"usable"}
+    errors = []
+    increments_predicted = np.diff(np.concatenate([[0.0], predicted]))
+    increments_action = np.diff(np.concatenate([[0.0], action]))
+    per_interval = []
+    for index, (predicted_row, action_row) in enumerate(zip(predicted_rows, action_rows)):
+        status = str(predicted_row.get("status", "abstain"))
+        use = status in allowed
+        error = abs(float(predicted[index] - action[index])) if use else None
+        if error is not None:
+            errors.append(error)
+        per_interval.append({
+            "time_s": float(predicted_row["time_s"]),
+            "status": status,
+            "evaluable": use,
+            "forward_displacement_error": error,
+            "forward_displacement_increment_error": (
+                abs(float(increments_predicted[index] - increments_action[index])) if use else None
+            ),
+        })
+    valid = [index for index, row in enumerate(per_interval) if row["evaluable"]]
+    increment_errors = [abs(float(increments_predicted[index] - increments_action[index])) for index in valid]
+    if errors:
+        pred_valid = predicted[valid]
+        action_valid = action[valid]
+        pred_norm = float(np.linalg.norm(pred_valid))
+        action_norm = float(np.linalg.norm(action_valid))
+        cosine = float(np.dot(pred_valid, action_valid) / (pred_norm * action_norm)) if pred_norm > 1e-9 and action_norm > 1e-9 else None
+        metric = {
+            "mae": float(np.mean(errors)),
+            "rmse": float(np.sqrt(np.mean(np.square(errors)))),
+            "endpoint_abs_error": float(abs(predicted[-1] - action[-1])) if valid[-1] == len(predicted) - 1 else None,
+            "increment_mae": float(np.mean(increment_errors)) if increment_errors else None,
+            "curve_cosine": cosine,
+            "count": len(errors),
+        }
+    else:
+        metric = {"mae": None, "rmse": None, "endpoint_abs_error": None, "increment_mae": None, "curve_cosine": None, "count": 0}
+    return {
+        "protocol": "continuous-forward-distance-alignment-v1",
+        "scale_mode": scale_mode,
+        "status": "ok" if errors else "abstain",
+        "coverage": float(len(valid) / len(predicted_rows)),
+        "evaluable_intervals": len(valid),
+        "total_intervals": len(predicted_rows),
+        "independent_terminal_scale_ratio": scale_ratio,
+        "metrics": {"forward_displacement_profile": metric},
+        "per_interval": per_interval,
+        "leakage_audit": {
+            "image_source": image_profile.get("source"),
+            "action_waypoint_visible_to_image_decoder": False,
+            "action_used_for_image_scale": False,
+        },
+    }
+
+
 def compare_history_baseline(
     history_profile: dict[str, Any],
     action_profile: dict[str, Any],
