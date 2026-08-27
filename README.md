@@ -43,6 +43,15 @@ diagnostic probe, not a formal causal metric.
 The full-method search and the proposed persistent-scale/global-residual repair are
 documented in [Level 1 longitudinal solution search and V5 plan](docs/LEVEL1_LONGITUDINAL_SOLUTION_SEARCH_20260827_ZH.md).
 
+The cleaned overlap-aware NAVSIM package is in `datasets/navsim_level1_v5/`:
+`navsim_level1_v5_all_78.jsonl` is the reproducible development source,
+`navsim_level1_v5_eval_nonoverlap.jsonl` contains 25 scene-aware non-overlapping
+windows for statistical claims, and `navsim_level1_v5_development_overlap.jsonl`
+contains the remaining 53 windows for diagnostics only. All three retain the
+candidate bank for protocol compatibility, but Level 1 must use only `logged`
+after image decoding. The audit explicitly records that native realized futures
+validate the measurement probe and do not support a WAM causal claim.
+
 ![Converged IAC continuous foresight-action architecture](docs/figures/continuous_foresight_alignment_v1.svg)
 
 The Level 1 longitudinal branch and its fail-closed next-step boundary are shown in
