@@ -89,6 +89,13 @@ WAM 生成的 8 张未来图像，保留历史状态、时间戳和相机标定�
 `realized_future_ego_state`，防止未来真值进入图像分支。没有完成生成的 branch
 直接失败。NAVSIM realized future 只用于 Level 0 measurement validation。
 
+在合并之前必须运行 `scripts/audit_wam_level1_outputs.py`。审计器逐行检查
+`branch_id/source_key` lineage、`wam_model_id`、`future_images_source=wam_generated`、
+8 张未来图像、0.5--4.0 秒时间轴和 `[8,3]` 的独立 action-head trajectory，
+并拒绝任何 `realized_future_ego_state` 泄漏。只有 `formal_level1_input_ready=true`
+的输出才允许进入 manifest converter。孤立的 mp4/png、动作探针或 smoke 结果
+没有这些字段，不能作为正式 WAM 证据。
+
 ## 6. NAVSIM 78 样本代理结果
 
 当前数据是 logged future、`4 帧/2 秒`，因此只能验证指标行为，不能作为正式 WAM Level 1 结论。

@@ -283,6 +283,8 @@ not a Waymo result.
 - `scripts/compare_flow_backends.py`: paired RAFT/SEA-RAFT decoder comparison
 - `scripts/build_actor_motion_manifest.py`: build independent NuPlan actor-state reference set
 - `scripts/audit_actor_motion_manifest.py`: fail-closed reference-set audit
+- `scripts/audit_wam_level1_outputs.py`: fail-closed audit of completed WAM future-image outputs
+- `scripts/build_wam_level1_continuous_manifest.py`: merge audited WAM images with the fixed Level-1 base manifest
 - `scripts/evaluate_cotracker_actor_motion.py`: oracle actor tracker/geometry capability bound
 - `scripts/render_cotracker_actor_motion.py`: representative and failure-case track overlays
 - `configs/navsim_continuous_decoder_plane.json`: reported default configuration

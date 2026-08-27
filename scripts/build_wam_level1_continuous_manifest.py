@@ -81,6 +81,11 @@ def build_manifest(
         action_array = np.asarray(action, dtype=np.float64)
         if action_array.shape != (expected_future_count, 3) or not np.all(np.isfinite(action_array)):
             raise ValueError(f"{branch_id}: action head trajectory must have shape [8,3]")
+        if generated.get("realized_future_ego_state") is not None or (generated.get("metadata") or {}).get("realized_future_ego_state") is not None:
+            raise ValueError(f"{branch_id}: generated WAM output contains realized future state leakage")
+        action_source = str(generated.get("action_source") or (generated.get("metadata") or {}).get("action_source") or "")
+        if action_source in {"logged", "oracle", "proxy", "candidate"}:
+            raise ValueError(f"{branch_id}: action source must be the independent WAM action head")
         candidates = list(base.get("candidates") or [])
         if len(candidates) < 2:
             raise ValueError(f"{branch_id}: base candidate bank must contain at least two entries")
