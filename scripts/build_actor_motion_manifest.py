@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import numpy as np
+import cv2
 
 
 TAG_SCOPE: dict[str, tuple[str, str]] = {
@@ -96,6 +97,76 @@ def _ego_pose(row: tuple[Any, ...]) -> tuple[np.ndarray, np.ndarray]:
 
 def _global_to_ego(point: np.ndarray, translation: np.ndarray, rotation: np.ndarray) -> np.ndarray:
     return rotation.T @ (np.asarray(point, dtype=np.float64) - translation)
+
+
+def _project_ego_point(
+    point_ego: np.ndarray,
+    calibration: dict[str, Any],
+) -> tuple[list[float] | None, bool]:
+    camera_to_ego = np.asarray(calibration["camera_to_ego"], dtype=np.float64)
+    point_camera = camera_to_ego[:3, :3].T @ (
+        np.asarray(point_ego, dtype=np.float64) - camera_to_ego[:3, 3]
+    )
+    if not np.isfinite(point_camera).all() or point_camera[2] <= 1e-3:
+        return None, False
+    pixels, _ = cv2.projectPoints(
+        point_camera.reshape(1, 1, 3),
+        np.zeros(3),
+        np.zeros(3),
+        np.asarray(calibration["intrinsics"], dtype=np.float64),
+        np.asarray(calibration["distortion"], dtype=np.float64),
+    )
+    u, v = map(float, pixels.reshape(2))
+    width, height = calibration["image_size"]
+    visible = bool(np.isfinite([u, v]).all() and 0.0 <= u < width and 0.0 <= v < height)
+    return ([u, v] if visible else None), visible
+
+
+def _project_box_xyxy(
+    center_global: np.ndarray,
+    *,
+    width_m: float,
+    length_m: float,
+    height_m: float,
+    yaw_rad: float,
+    ego_translation: np.ndarray,
+    ego_rotation: np.ndarray,
+    calibration: dict[str, Any],
+) -> list[float] | None:
+    forward = np.asarray([math.cos(yaw_rad), math.sin(yaw_rad), 0.0])
+    lateral = np.asarray([-math.sin(yaw_rad), math.cos(yaw_rad), 0.0])
+    camera_to_ego = np.asarray(calibration["camera_to_ego"], dtype=np.float64)
+    corners = []
+    for longitudinal_sign in (-1.0, 1.0):
+        for lateral_sign in (-1.0, 1.0):
+            for vertical_sign in (-1.0, 1.0):
+                point = np.asarray(center_global, dtype=np.float64).copy()
+                point += longitudinal_sign * 0.5 * float(length_m) * forward
+                point += lateral_sign * 0.5 * float(width_m) * lateral
+                point[2] += vertical_sign * 0.5 * float(height_m)
+                point_ego = _global_to_ego(point, ego_translation, ego_rotation)
+                point_camera = camera_to_ego[:3, :3].T @ (
+                    point_ego - camera_to_ego[:3, 3]
+                )
+                if not np.isfinite(point_camera).all() or point_camera[2] <= 1e-3:
+                    continue
+                pixel, _ = cv2.projectPoints(
+                    point_camera.reshape(1, 1, 3), np.zeros(3), np.zeros(3),
+                    np.asarray(calibration["intrinsics"], dtype=np.float64),
+                    np.asarray(calibration["distortion"], dtype=np.float64),
+                )
+                corners.append(pixel.reshape(2))
+    if len(corners) < 4:
+        return None
+    corners_array = np.asarray(corners, dtype=np.float64)
+    image_width, image_height = calibration["image_size"]
+    x0 = float(np.clip(np.min(corners_array[:, 0]), 0.0, image_width - 1.0))
+    y0 = float(np.clip(np.min(corners_array[:, 1]), 0.0, image_height - 1.0))
+    x1 = float(np.clip(np.max(corners_array[:, 0]), 0.0, image_width - 1.0))
+    y1 = float(np.clip(np.max(corners_array[:, 1]), 0.0, image_height - 1.0))
+    if x1 - x0 < 2.0 or y1 - y0 < 2.0:
+        return None
+    return [x0, y0, x1, y1]
 
 
 def _stable_key(*values: object) -> str:
@@ -177,11 +248,12 @@ def _build_one(
     history_offsets_s: tuple[float, ...],
     future_offsets_s: tuple[float, ...],
     tolerance_us: int,
+    minimum_image_visible_frames: int,
 ) -> dict[str, Any] | None:
     anchor_timestamp = int(candidate["timestamp"])
     offsets = history_offsets_s + future_offsets_s
     image_rows = connection.execute(
-        "SELECT im.timestamp, im.filename_jpg FROM image im JOIN camera cam ON cam.token=im.camera_token "
+        "SELECT im.timestamp, im.filename_jpg, im.ego_pose_token FROM image im JOIN camera cam ON cam.token=im.camera_token "
         "WHERE cam.channel=? AND im.timestamp BETWEEN ? AND ? ORDER BY im.timestamp",
         (camera_channel, anchor_timestamp + round(min(offsets) * 1e6) - tolerance_us,
          anchor_timestamp + round(max(offsets) * 1e6) + tolerance_us),
@@ -208,7 +280,12 @@ def _build_one(
         path = next((item for item in options if item.is_file()), options[0])
         if not path.is_file():
             return None
-        selected_images.append({"offset_s": float(offset), "timestamp_us": int(image[0]), "path": str(path.resolve())})
+        selected_images.append({
+            "offset_s": float(offset),
+            "timestamp_us": int(image[0]),
+            "path": str(path.resolve()),
+            "ego_pose_token": image[2],
+        })
         selected_lidar.append(lidar)
 
     calibration = _camera_calibration(connection, camera_channel)
@@ -236,39 +313,63 @@ def _build_one(
         track_token = min(front)[1]
 
     actor_positions = []
-    visible = []
+    lidar_visibility = []
+    image_visibility = []
+    ground_contact_pixels = []
+    actor_boxes_xyxy = []
     actor_confidence = []
     actor_class = None
-    for lidar in selected_lidar[len(history_offsets_s):]:
+    future_images = selected_images[len(history_offsets_s):]
+    future_lidar = selected_lidar[len(history_offsets_s):]
+    for image, lidar in zip(future_images, future_lidar):
         box = connection.execute(
-            "SELECT lb.x,lb.y,lb.z,lb.confidence,c.name FROM lidar_box lb "
+            "SELECT lb.x,lb.y,lb.z,lb.width,lb.length,lb.height,lb.yaw,lb.confidence,c.name FROM lidar_box lb "
             "JOIN track tr ON tr.token=lb.track_token JOIN category c ON c.token=tr.category_token "
             "WHERE lb.lidar_pc_token=? AND lb.track_token=? LIMIT 1",
             (lidar[0], track_token),
         ).fetchone()
         pose = connection.execute(
-            "SELECT x,y,z,qw,qx,qy,qz FROM ego_pose WHERE token=?", (lidar[2],)
+            "SELECT x,y,z,qw,qx,qy,qz FROM ego_pose WHERE token=?", (image["ego_pose_token"],)
         ).fetchone()
         if pose is None:
             return None
         translation, rotation = _ego_pose(pose)
         if box is None:
             actor_positions.append([None, None])
-            visible.append(False)
+            lidar_visibility.append(False)
+            image_visibility.append(False)
+            ground_contact_pixels.append([None, None])
+            actor_boxes_xyxy.append([None, None, None, None])
             actor_confidence.append(0.0)
             continue
-        point = _global_to_ego(np.asarray(box[:3]), translation, rotation)
-        actor_positions.append([float(point[0]), float(point[1])])
-        confidence = float(box[3]) if np.isfinite(float(box[3])) else 0.0
-        is_visible = bool(np.isfinite(point).all() and confidence >= 0.2)
-        visible.append(is_visible)
-        actor_confidence.append(confidence if is_visible else 0.0)
-        actor_class = actor_class or str(box[4])
-    if sum(visible) < 3:
+        center_global = np.asarray(box[:3], dtype=np.float64)
+        bottom_global = center_global.copy()
+        bottom_global[2] -= 0.5 * float(box[5])
+        center_ego = _global_to_ego(center_global, translation, rotation)
+        bottom_ego = _global_to_ego(bottom_global, translation, rotation)
+        pixel, in_image = _project_ego_point(bottom_ego, calibration)
+        actor_box = _project_box_xyxy(
+            center_global,
+            width_m=float(box[3]), length_m=float(box[4]), height_m=float(box[5]),
+            yaw_rad=float(box[6]), ego_translation=translation, ego_rotation=rotation,
+            calibration=calibration,
+        )
+        actor_positions.append([float(center_ego[0]), float(center_ego[1])])
+        confidence = float(box[7]) if np.isfinite(float(box[7])) else 0.0
+        lidar_visible = bool(np.isfinite(center_ego).all() and confidence >= 0.2)
+        lidar_visibility.append(lidar_visible)
+        image_visibility.append(bool(lidar_visible and in_image))
+        ground_contact_pixels.append(pixel if pixel is not None else [None, None])
+        actor_boxes_xyxy.append(actor_box if actor_box is not None else [None, None, None, None])
+        actor_confidence.append(confidence if lidar_visible else 0.0)
+        actor_class = actor_class or str(box[8])
+    if sum(lidar_visibility) < 3:
+        return None
+    if sum(image_visibility) < int(minimum_image_visible_frames):
         return None
     source_key = f"nuplan:{candidate['logfile']}:{_token(candidate['lidar_pc_token'])}"
     return {
-        "protocol": "actor-motion-reference-v1",
+        "protocol": "actor-motion-reference-v3",
         "sample_id": f"{source_key}:{candidate['chain_type']}",
         "scene_id": candidate["scene_token"],
         "dataset": "navsim_sensor_backed_nuplan",
@@ -287,7 +388,11 @@ def _build_one(
             "class_label": actor_class or "unknown",
             "times_s": list(future_offsets_s),
             "positions_ego_m": actor_positions,
-            "visibility": visible,
+            "visibility": lidar_visibility,
+            "lidar_visibility": lidar_visibility,
+            "image_visibility": image_visibility,
+            "ground_contact_pixels_uv": ground_contact_pixels,
+            "actor_boxes_xyxy": actor_boxes_xyxy,
             "confidence": actor_confidence,
             "source": "nuplan_lidar_box_center",
         }],
@@ -307,9 +412,14 @@ def build_manifest(
     seed: str,
     camera_channel: str,
     tolerance_ms: float,
+    minimum_image_visible_frames: int,
+    max_per_log_per_chain: int,
+    max_per_scene_per_chain: int,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     selected: list[dict[str, Any]] = []
     selected_by_chain: Counter[str] = Counter()
+    selected_by_log: Counter[tuple[str, str]] = Counter()
+    selected_by_scene: Counter[tuple[str, str]] = Counter()
     for db_path in sorted(Path(path) for path in db_paths):
         connection = sqlite3.connect(db_path)
         try:
@@ -327,28 +437,48 @@ def build_manifest(
                 for candidate in ordered:
                     if selected_by_chain[chain] >= max_per_chain:
                         break
+                    log_key = (chain, str(candidate["logfile"]))
+                    scene_key = (chain, str(candidate["scene_token"]))
+                    if selected_by_log[log_key] >= int(max_per_log_per_chain):
+                        continue
+                    if selected_by_scene[scene_key] >= int(max_per_scene_per_chain):
+                        continue
                     record = _build_one(
                         connection, candidate, sensor_root,
                         camera_channel=camera_channel,
                         history_offsets_s=(-1.5, -1.0, -0.5, 0.0),
                         future_offsets_s=tuple(0.5 * (index + 1) for index in range(8)),
                         tolerance_us=round(float(tolerance_ms) * 1000),
+                        minimum_image_visible_frames=minimum_image_visible_frames,
                     )
                     if record is None:
                         continue
                     selected.append(record)
                     selected_by_chain[chain] += 1
+                    selected_by_log[log_key] += 1
+                    selected_by_scene[scene_key] += 1
         finally:
             connection.close()
     counts = {chain: sum(row["chain_type"] == chain for row in selected) for chain in CHAIN_ORDER}
     return selected, {
-        "protocol": "actor-motion-reference-v1",
+        "protocol": "actor-motion-reference-v3",
         "num_records": len(selected),
         "counts_by_chain": counts,
         "history_frames": 4,
         "future_frames": 8,
         "future_times_s": [0.5 * (index + 1) for index in range(8)],
         "reference_source": "nuplan_lidar_box_center",
+        "minimum_image_visible_frames": int(minimum_image_visible_frames),
+        "max_per_log_per_chain": int(max_per_log_per_chain),
+        "max_per_scene_per_chain": int(max_per_scene_per_chain),
+        "unique_logs_by_chain": {
+            chain: len({row["source_key"].split(":", 2)[1] for row in selected if row["chain_type"] == chain})
+            for chain in CHAIN_ORDER
+        },
+        "unique_scenes_by_chain": {
+            chain: len({row["scene_id"] for row in selected if row["chain_type"] == chain})
+            for chain in CHAIN_ORDER
+        },
         "contains_wam_action": False,
     }
 
@@ -362,11 +492,17 @@ def main() -> None:
     parser.add_argument("--seed", default="iac-actor-motion-v1")
     parser.add_argument("--camera-channel", default="CAM_F0")
     parser.add_argument("--tolerance-ms", type=float, default=75.0)
+    parser.add_argument("--minimum-image-visible-frames", type=int, default=3)
+    parser.add_argument("--max-per-log-per-chain", type=int, default=2)
+    parser.add_argument("--max-per-scene-per-chain", type=int, default=1)
     args = parser.parse_args()
     db_paths = sorted(args.db_root.glob("*.db")) if args.db_root.is_dir() else [args.db_root]
     records, summary = build_manifest(
         db_paths, args.sensor_root, max_per_chain=args.max_per_chain, seed=args.seed,
         camera_channel=args.camera_channel, tolerance_ms=args.tolerance_ms,
+        minimum_image_visible_frames=args.minimum_image_visible_frames,
+        max_per_log_per_chain=args.max_per_log_per_chain,
+        max_per_scene_per_chain=args.max_per_scene_per_chain,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", encoding="utf-8") as stream:

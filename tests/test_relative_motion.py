@@ -115,6 +115,8 @@ class RelativeMotionTest(unittest.TestCase):
         self.assertAlmostEqual(report["distance_mae_m"], 0.5)
         self.assertAlmostEqual(report["closing_speed_mae_mps"], 0.25)
         self.assertEqual(len(report["coverage_risk"]), 4)
+        self.assertEqual(report["num_reference_dangerous"], 0)
+        self.assertIsNone(report["dangerous_ttc_recall"])
 
     def test_missing_metric_fields_fail_closed(self) -> None:
         report = evaluate_relative_motion_metrics([

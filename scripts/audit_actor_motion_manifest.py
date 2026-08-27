@@ -20,7 +20,11 @@ def audit(path: Path) -> dict[str, Any]:
     chains: Counter[str] = Counter()
     for index, row in enumerate(rows):
         prefix = f"row[{index}]"
-        if row.get("protocol") != "actor-motion-reference-v1":
+        protocol = row.get("protocol")
+        if protocol not in {
+            "actor-motion-reference-v1", "actor-motion-reference-v2",
+            "actor-motion-reference-v3",
+        }:
             errors.append({"row": index, "reason": "invalid_protocol"})
         if any(key in row for key in ("action_condition", "action_trajectory", "candidates", "future_action")):
             errors.append({"row": index, "reason": "action_leakage_field"})
@@ -40,6 +44,26 @@ def audit(path: Path) -> dict[str, Any]:
                 errors.append({"row": index, "track": track_index, "reason": "track_shape_mismatch"})
             if int(visibility.sum()) < 3:
                 errors.append({"row": index, "track": track_index, "reason": "insufficient_visibility"})
+            if protocol in {"actor-motion-reference-v2", "actor-motion-reference-v3"}:
+                lidar_visibility = np.asarray(track.get("lidar_visibility"), dtype=bool)
+                image_visibility = np.asarray(track.get("image_visibility"), dtype=bool)
+                ground_pixels = np.asarray(track.get("ground_contact_pixels_uv"), dtype=np.float64)
+                if (
+                    lidar_visibility.shape != (8,)
+                    or image_visibility.shape != (8,)
+                    or ground_pixels.shape != (8, 2)
+                ):
+                    errors.append({"row": index, "track": track_index, "reason": "image_track_shape_mismatch"})
+                elif int(image_visibility.sum()) < 3:
+                    errors.append({"row": index, "track": track_index, "reason": "insufficient_image_visibility"})
+                elif not np.isfinite(ground_pixels[image_visibility]).all():
+                    errors.append({"row": index, "track": track_index, "reason": "visible_pixel_not_finite"})
+                if protocol == "actor-motion-reference-v3":
+                    boxes = np.asarray(track.get("actor_boxes_xyxy"), dtype=np.float64)
+                    if boxes.shape != (8, 4):
+                        errors.append({"row": index, "track": track_index, "reason": "actor_box_shape_mismatch"})
+                    elif not np.isfinite(boxes[image_visibility]).all():
+                        errors.append({"row": index, "track": track_index, "reason": "visible_actor_box_not_finite"})
         chains[str(row.get("chain_type"))] += 1
     return {
         "protocol": "actor-motion-reference-audit-v1",
@@ -48,6 +72,10 @@ def audit(path: Path) -> dict[str, Any]:
         "counts_by_chain": dict(chains),
         "num_errors": len(errors),
         "formal_ready": not errors and bool(rows),
+        "image_tracking_ready": bool(rows) and not errors and all(
+            row.get("protocol") in {"actor-motion-reference-v2", "actor-motion-reference-v3"}
+            for row in rows
+        ),
         "errors": errors,
     }
 

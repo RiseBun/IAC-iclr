@@ -144,8 +144,8 @@ PYTHONPATH=src python scripts/evaluate_relative_motion_metrics.py \
 
 已完成：SEA-RAFT 后端修复、同协议 A/B、actor 相对运动拟合、区间/弃权协议和正式评分器。
 
-尚未完成的是从原始图像自动产生稳定 actor track，以及在 78 个带独立 actor 真值的样本上
-验证距离、closing speed 和 TTC。只有同时通过以下门槛，相对速度才能升级为正式因果指标：
+已经完成 CoTracker3 oracle 初始化的 actor track 能力上界；尚未完成的是盲检测/关联，以及
+包含真实危险冲突正例的数据集。只有同时通过以下门槛，相对速度才能升级为正式因果指标：
 
 1. actor association 在遮挡和重新出现时保持身份；
 2. distance/closing-speed 在独立真值上达到预注册误差门槛；
@@ -153,9 +153,8 @@ PYTHONPATH=src python scripts/evaluate_relative_motion_metrics.py \
 4. coverage-risk 随高置信筛选单调改善；
 5. 不读取未来 action waypoint。
 
-下一实验应固定 78 个 4 秒/8 帧 actor-level 样本，运行：RAFT-Large 基线、加 history state、
-加 8-frame tracker、加 metric depth/SpatialTrackerV2 challenger。不能直接沿用本次 2 秒
-ego 事件结果冒充相对速度验证。
+下一实验应补齐危险冲突正例，并运行：CoTracker3 oracle 上界、盲 detector+tracker、加 metric
+depth、SpatialTrackerV2 challenger。不能直接沿用 2 秒 ego 事件结果冒充相对速度验证。
 
 ## 7. 首版独立参考集（服务器实测）
 
@@ -173,3 +172,60 @@ ego 事件结果冒充相对速度验证。
 Counterfactual Consistency/Foresight-Conditioned Success。服务器当前未发现可直接读取的
 Waymo TFRecord/actor manifest，因此 Waymo 分支仍需单独导出到同一 JSONL 协议后再合并，不能
 把 NuPlan/NAVSIM 结果标成 Waymo 结果。
+
+## 8. 图像可见、场景去重的 V2 与 CoTracker3 上界
+
+同日构建 `results/actor_motion_reference_v2_image_visible_20260827/`。V2 不再把 LiDAR 中存在
+等同于前视图像可见，并新增每帧 `image_visibility` 与畸变图像坐标中的
+`ground_contact_pixels_uv`。固定约束为：
+
+- 四链各 10 条、共 40 条，严格 8 帧/4 秒；
+- 每条至少 3 帧真实前视可见；
+- 每个 chain/scene 最多 1 条，每个 chain/log 最多 2 条；
+- 四类分别覆盖 7/7/9/8 个日志和各 10 个 scene；
+- audit 为 `formal_ready=true, image_tracking_ready=true`；
+- manifest SHA256 为 `acc63a8da4cc3eb7a5d866b3cfa04a2ac2dd09e89c205834915ab6d65c5b2a1b`。
+
+CoTracker3-offline 使用官方 `scaled_offline.pth`，SHA256 为
+`2670d4562ed69326dda775a26e54883925cd11b6fc9b24cb7aa9f8078bce7834`。
+目标在首次图像可见帧由 LiDAR ground contact oracle 初始化；初始化帧和此前帧均不计分，
+因此该实验是 tracker+geometry 的能力上界，不是最终盲评指标。没有读取未来 action 或候选轨迹。
+
+| chain | 有效帧覆盖率 | distance MAE / m | closing-speed MAE / m/s | closing sign acc. |
+|---|---:|---:|---:|---:|
+| 全部 | 0.7617 | 3.1219 | 0.6249 | 0.8282 |
+| cut-in / lead brake | 1.0000 | 1.8394 | **0.0953** | 0.9429 |
+| blocked lane | 0.4375 | 8.8675 | 2.7439 | 0.5238 |
+| pedestrian crossing | 0.7273 | 2.9968 | 0.9743 | 0.6562 |
+| unprotected turn / merge | 0.7692 | 2.4500 | **0.1599** | 0.9250 |
+
+结论不是“相对速度整体可用”，而是：
+
+1. `cut-in / lead brake` 的 closing speed 已达到正式指标候选水平；
+2. `unprotected turn / merge` 在弃权后可作为辅助证据；
+3. `blocked lane` 应评 obstruction occupancy / clearance，而不是强行评 actor speed；
+4. pedestrian 需要目标区域/多点跟踪和更可靠深度，单 ground-contact point 尚不够；
+5. 当前 40 条中独立真值的 `corridor_conflict_ttc <= 4 s` 正例为 0，因此 TTC recall/F1
+   必须报告为 `null`，不能声称已验证危险 TTC。
+
+服务器结果 `cotracker_oracle_full.json` 包含按链拆分、coverage-risk 和每帧像素轨迹；
+`scripts/render_cotracker_actor_motion.py` 可生成代表样本与失败样本叠图。
+
+绿色圆圈是独立 LiDAR box ground-contact 投影，紫色十字是 CoTracker，黄色线为像素误差；
+带黄色外圈的帧只用于 oracle 初始化，不进入评分。
+
+**cut-in / lead brake 代表样本：车辆落地点在 4 秒内保持一致。**
+
+![cut-in CoTracker representative](assets/actor_motion_v2/cut_in_or_lead_brake_representative.jpg)
+
+**unprotected turn / merge 代表样本：可跟踪，但米制误差仍受地面投影尺度放大。**
+
+![merge CoTracker representative](assets/actor_motion_v2/unprotected_turn_or_merge_representative.jpg)
+
+**pedestrian 代表失败：单点锁住脚下/路面纹理，没有随人体移动。**
+
+![pedestrian CoTracker failure](assets/actor_motion_v2/pedestrian_crossing_representative.jpg)
+
+**blocked-lane 最坏失败：边缘首次出现后发生错误关联。**
+
+![blocked-lane CoTracker failure](assets/actor_motion_v2/blocked_lane_worst.jpg)

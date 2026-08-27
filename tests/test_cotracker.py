@@ -4,8 +4,11 @@ import numpy as np
 
 from iac_new.cotracker import (
     PointTrackObservation,
+    actor_box_query_points,
     actor_pixel_tracks_from_observation,
+    aggregate_actor_region_tracks,
     point_track_curvature_features,
+    validate_query_frame_indices,
     validate_query_points,
 )
 
@@ -46,6 +49,41 @@ class CoTrackerFeatureTest(unittest.TestCase):
         self.assertEqual(points.shape, (2, 2))
         with self.assertRaises(ValueError):
             validate_query_points(np.asarray([[512.0, 20.0]]), height=288, width=512)
+
+    def test_queries_can_start_when_an_actor_first_becomes_visible(self) -> None:
+        frames = validate_query_frame_indices(
+            np.asarray([0, 3]), num_queries=2, num_frames=8
+        )
+        np.testing.assert_array_equal(frames, [0, 3])
+        with self.assertRaises(ValueError):
+            validate_query_frame_indices(
+                np.asarray([0.5]), num_queries=1, num_frames=8
+            )
+        with self.assertRaises(ValueError):
+            validate_query_frame_indices(
+                np.asarray([8]), num_queries=1, num_frames=8
+            )
+
+    def test_actor_region_consensus_moves_ground_anchor(self) -> None:
+        query = actor_box_query_points(
+            np.asarray([100.0, 80.0, 160.0, 200.0]), height=288, width=512,
+            columns=2, rows=2,
+        )
+        tracks = np.repeat(query[None, :, :], 3, axis=0)
+        tracks[1] += [5.0, -2.0]
+        tracks[2] += [10.0, -4.0]
+        visibility = np.ones((3, len(query)), dtype=np.float32)
+        confidence = np.ones_like(visibility)
+        observation = PointTrackObservation(
+            tracks=tracks, visibility=visibility, confidence=confidence,
+            query_points=query, source_size=(512, 288), target_size=(512, 288),
+        )
+        anchors, valid, scores = aggregate_actor_region_tracks(
+            observation, np.asarray([130.0, 200.0])
+        )
+        np.testing.assert_allclose(anchors[2], [140.0, 196.0], atol=1e-4)
+        self.assertTrue(valid.all())
+        self.assertTrue((scores > 0.9).all())
 
     def test_actor_queries_keep_tracker_visibility_and_confidence(self) -> None:
         tracks = np.asarray([

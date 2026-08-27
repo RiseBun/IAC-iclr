@@ -152,6 +152,17 @@ PYTHONPATH=src python scripts/evaluate_relative_motion_metrics.py \
   --records relative_motion_gold_pairs.jsonl --output relative_motion_metrics.json
 ```
 
+Run the oracle-initialized CoTracker3 capability bound and render auditable overlays:
+
+```bash
+PYTHONPATH=src python scripts/evaluate_cotracker_actor_motion.py \
+  --manifest actor_motion_reference_v2.jsonl --checkpoint /path/to/scaled_offline.pth \
+  --output cotracker_oracle.json --device cuda
+PYTHONPATH=src python scripts/render_cotracker_actor_motion.py \
+  --manifest actor_motion_reference_v2.jsonl --report cotracker_oracle.json \
+  --output-dir cotracker_overlays
+```
+
 ## Current evidence
 
 The frozen default recovered lateral events on the balanced NAVSIM set with:
@@ -201,6 +212,8 @@ not a Waymo result.
 - `scripts/compare_flow_backends.py`: paired RAFT/SEA-RAFT decoder comparison
 - `scripts/build_actor_motion_manifest.py`: build independent NuPlan actor-state reference set
 - `scripts/audit_actor_motion_manifest.py`: fail-closed reference-set audit
+- `scripts/evaluate_cotracker_actor_motion.py`: oracle actor tracker/geometry capability bound
+- `scripts/render_cotracker_actor_motion.py`: representative and failure-case track overlays
 - `configs/navsim_continuous_decoder_plane.json`: reported default configuration
 - `configs/causal_chain_v1.example.jsonl`: executable four-chain risk/clear example
 - `tests/`: unit and protocol tests

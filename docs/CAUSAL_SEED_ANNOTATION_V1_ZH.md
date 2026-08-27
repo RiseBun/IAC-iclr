@@ -297,6 +297,8 @@ causal_chain_score = min(
 | 内容 | 当前状态 | 可以宣称什么 |
 |---|---|---|
 | RAFT-Large 自车 maneuver event | 已冻结并在 78 样本验证 | 图像侧方向事件恢复基线有效 |
+| CoTracker3 actor closing speed 上界 | 40 条场景去重、图像可见样本已验证 | vehicle 链可用；不能外推到所有事件 |
+| 危险 TTC 正例 | 当前 40 条中为 0 | 不能报告 TTC recall/F1 |
 | 四类候选挖掘 | 已完成首批 31 条可读候选 | 已建立真实数据入口 |
 | 风险种子盲标包 | 已生成并通过泄漏/checksum/尺寸审计 | 可开始三人独立盲标 |
 | 四类人工 gold set | 尚未完成 | 不能报告 interaction accuracy |
@@ -309,11 +311,11 @@ causal_chain_score = min(
 
 ## 11. 接下来的实验顺序
 
-1. 三名标注者独立完成 31 条 risk-seed 任务，冻结文件后计算类别确认率、阶段可观察率、pairwise agreement 和 generalized kappa。
-2. 对有共识的样本回抽原生高帧率片段；若某类有效样本不足，回到候选挖掘补充，而不是降低标准。
-3. 用人工 gold set 校准 interaction probe，冻结阈值、abstention 和 scene-disjoint calibration/holdout split。
-4. 为每个通过的 history 构造 risk/clear imagined future，并审计 history、planner、candidate bank 和 nuisance seed 是否固定。
-5. 重跑 action head，计算 imagined-risk contrast、protective-action contrast 和 FUI。
+1. 用 actor mask 内多点共识修复 pedestrian/blocked-lane 的单点漂移，并保留可观测性弃权。
+2. 定向挖掘 `corridor_conflict_ttc <= 4 s` 正例；没有正例时不计算 TTC recall/F1。
+3. 三名标注者独立完成 risk-seed 任务，冻结文件后计算类别确认率、阶段可观察率、pairwise agreement 和 generalized kappa。
+4. 用人工 gold set 校准 interaction probe，冻结阈值、abstention 和 scene-disjoint calibration/holdout split。
+5. 为每个通过的 history 构造 risk/clear imagined future，固定 action head 的其他输入后重跑。
 6. 接入独立 simulator/logged telemetry，补齐 collision、TTC/clearance、drivable-area compliance 与 progress。
 7. 报告四类分别结果、等权宏平均、coverage、bootstrap 置信区间和 identical-future/action-swap/null controls。
 
@@ -357,4 +359,28 @@ PYTHONPATH=src:. python scripts/evaluate_causal_chains.py \
 
 ## 13. 对外介绍时的 60 秒版本
 
-我们的目标不是评价 WAM 视频“像不像真的”，也不是只看规划成功率，而是检查模型想象的未来是否真正改变了动作。方法上，我们先用 RAFT-Large、前后向一致性、地平面几何和候选盲连续解码，从未来图像恢复事件 posterior；然后针对前车风险、行人横穿、车道阻塞和无保护转向/汇入四类场景，构造同一历史下的 risk/clear future，固定 action head 的其他条件重跑。只有未来冲突对比、动作响应对比和独立安全进展结果同时成立，样本才得分。当前我们已经完成评测协议、失败关闭评分器、31 条真实候选和三人盲标包；下一步是形成四类人工 gold set、冻结 interaction probe，再进行 action-head future swap 和闭环结果验证。
+我们的目标不是评价 WAM 视频“像不像真的”，也不是只看规划成功率，而是检查模型想象的未来是否真正改变了动作。方法上，我们先用 RAFT-Large、前后向一致性、地平面几何、长程 actor tracker 和候选盲连续解码，从未来图像恢复事件 posterior；然后针对前车风险、行人横穿、车道阻塞和无保护转向/汇入四类场景，构造同一历史下的 risk/clear future，固定 action head 的其他条件重跑。只有未来冲突对比、动作响应对比和独立安全进展结果同时成立，样本才得分。当前方向事件已在 78 条上验证；相对速度的 oracle 上界显示 vehicle 链成立，但 pedestrian 和 blocked-lane 的单点跟踪失败，且还没有危险 TTC 正例。因此下一步是多点 actor 跟踪、危险正例补集和人工 gold set，而不是直接宣称联合指标已经有效。
+
+## 14. Actor 相对运动服务器实测可视化（2026-08-27）
+
+新建的 V2 参考集含四链各 10 个不同 scene，严格 8 帧/4 秒，并把 LiDAR 可见与
+前视图像可见分开。CoTracker3 在首次可见帧用 LiDAR ground contact 做一次 oracle 初始化；
+该帧及此前帧不计分，未来 action 和候选轨迹均不输入。执行 observability abstention 后，
+总体帧覆盖率为 `76.2%`，closing-speed MAE 为 `0.625 m/s`。其中：
+
+- `cut-in / lead brake`：100% 覆盖，`0.095 m/s`；
+- `unprotected turn / merge`：76.9% 覆盖，`0.160 m/s`；
+- `pedestrian crossing`：72.7% 覆盖，`0.974 m/s`，单点跟踪不可靠；
+- `blocked lane`：43.8% 覆盖，`2.744 m/s`，速度不是合适主指标。
+
+绿色圆圈为独立 LiDAR 投影，紫色十字为 CoTracker。车辆目标保持一致：
+
+![CoTracker cut-in representative](assets/actor_motion_v2/cut_in_or_lead_brake_representative.jpg)
+
+行人单 ground-contact 点锁住脚下纹理，没有随人体移动，直接说明下一版需要 actor mask 内
+多点跟踪与鲁棒共识：
+
+![CoTracker pedestrian failure](assets/actor_motion_v2/pedestrian_crossing_representative.jpg)
+
+完整协议、按链指标、checksum 和另外两类可视化见
+[`RELATIVE_MOTION_CAPABILITY_V1_ZH.md`](RELATIVE_MOTION_CAPABILITY_V1_ZH.md)。

@@ -429,7 +429,15 @@ def evaluate_relative_motion_metrics(
         false_negative += int(not predicted_danger and reference_danger)
     precision = true_positive / max(true_positive + false_positive, 1)
     recall = true_positive / max(true_positive + false_negative, 1)
-    f1 = 2.0 * precision * recall / max(precision + recall, 1e-12)
+    predicted_positive = true_positive + false_positive
+    reference_positive = true_positive + false_negative
+    precision_value = float(precision) if predicted_positive else None
+    recall_value = float(recall) if reference_positive else None
+    f1_value = (
+        float(2.0 * precision * recall / max(precision + recall, 1e-12))
+        if predicted_positive and reference_positive
+        else None
+    )
 
     ordered = sorted(scored, key=lambda row: float(row.get("observability", 0.0)), reverse=True)
     coverage_risk = []
@@ -456,8 +464,10 @@ def evaluate_relative_motion_metrics(
         "closing_speed_mae_mps": float(np.mean(speed_error)) if len(speed_error) else None,
         "closing_sign_accuracy": float(np.mean(sign_correct)) if sign_correct else None,
         "dangerous_ttc_threshold_s": float(dangerous_ttc_s),
-        "dangerous_ttc_precision": float(precision),
-        "dangerous_ttc_recall": float(recall),
-        "dangerous_ttc_f1": float(f1),
+        "num_predicted_dangerous": int(predicted_positive),
+        "num_reference_dangerous": int(reference_positive),
+        "dangerous_ttc_precision": precision_value,
+        "dangerous_ttc_recall": recall_value,
+        "dangerous_ttc_f1": f1_value,
         "coverage_risk": coverage_risk,
     }

@@ -15,6 +15,7 @@ datasets/
 results/
 work/
 outputs/
+.artifacts/
 *.pth
 *.pt
 *.ckpt

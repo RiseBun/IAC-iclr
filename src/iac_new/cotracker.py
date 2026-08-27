@@ -23,6 +23,7 @@ class PointTrackObservation:
     query_points: np.ndarray  # [N, 2], pixel x/y in the first frame
     source_size: tuple[int, int]
     target_size: tuple[int, int]
+    query_frame_indices: np.ndarray | None = None
 
 
 def actor_pixel_tracks_from_observation(
@@ -119,6 +120,100 @@ def validate_query_points(
     return points
 
 
+def validate_query_frame_indices(
+    query_frame_indices: np.ndarray | None,
+    *,
+    num_queries: int,
+    num_frames: int,
+) -> np.ndarray:
+    """Validate the frame where each CoTracker query first becomes visible."""
+    if query_frame_indices is None:
+        return np.zeros(int(num_queries), dtype=np.int64)
+    query_frames = np.asarray(query_frame_indices, dtype=np.float64)
+    if query_frames.shape != (int(num_queries),) or not np.isfinite(query_frames).all():
+        raise ValueError("query_frame_indices must have shape [N]")
+    if np.any(query_frames < 0) or np.any(query_frames >= int(num_frames)):
+        raise ValueError("query_frame_indices must lie inside the video")
+    if not np.equal(query_frames, np.floor(query_frames)).all():
+        raise ValueError("query_frame_indices must be integers")
+    return query_frames.astype(np.int64)
+
+
+def actor_box_query_points(
+    box_xyxy: np.ndarray,
+    *,
+    height: int,
+    width: int,
+    columns: int = 3,
+    rows: int = 4,
+) -> np.ndarray:
+    """Sample body-region queries while avoiding the ground/background edge."""
+    box = np.asarray(box_xyxy, dtype=np.float64)
+    if box.shape != (4,) or not np.isfinite(box).all():
+        raise ValueError("box_xyxy must contain four finite values")
+    x0, y0, x1, y1 = box
+    if x1 - x0 < 2.0 or y1 - y0 < 2.0 or columns < 2 or rows < 2:
+        raise ValueError("actor box or query grid is too small")
+    xs = np.linspace(x0 + 0.20 * (x1 - x0), x1 - 0.20 * (x1 - x0), columns)
+    ys = np.linspace(y0 + 0.15 * (y1 - y0), y0 + 0.75 * (y1 - y0), rows)
+    return validate_query_points(
+        np.asarray([[x, y] for y in ys for x in xs], dtype=np.float32),
+        height=height,
+        width=width,
+    )
+
+
+def aggregate_actor_region_tracks(
+    observation: PointTrackObservation,
+    anchor_query_point: np.ndarray,
+    *,
+    minimum_points: int = 3,
+    confidence_threshold: float = 0.1,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Move an actor ground anchor with robust body-region track consensus."""
+    tracks = np.asarray(observation.tracks, dtype=np.float64)
+    visibility = np.asarray(observation.visibility, dtype=np.float64)
+    confidence = np.asarray(observation.confidence, dtype=np.float64)
+    source = np.asarray(observation.query_points, dtype=np.float64)
+    anchor = np.asarray(anchor_query_point, dtype=np.float64)
+    if tracks.ndim != 3 or tracks.shape[1:] != (len(source), 2):
+        raise ValueError("observation track/query shape mismatch")
+    if visibility.shape != tracks.shape[:2] or confidence.shape != tracks.shape[:2]:
+        raise ValueError("observation visibility/confidence shape mismatch")
+    if anchor.shape != (2,) or not np.isfinite(anchor).all():
+        raise ValueError("anchor_query_point must contain two finite values")
+    output = np.full((tracks.shape[0], 2), np.nan, dtype=np.float64)
+    output_visibility = np.zeros(tracks.shape[0], dtype=bool)
+    output_confidence = np.zeros(tracks.shape[0], dtype=np.float64)
+    for frame_index in range(tracks.shape[0]):
+        valid = visibility[frame_index] > 0.5
+        valid &= confidence[frame_index] >= float(confidence_threshold)
+        valid &= np.isfinite(tracks[frame_index]).all(axis=1)
+        if int(valid.sum()) < int(minimum_points):
+            continue
+        transform, inliers = cv2.estimateAffinePartial2D(
+            source[valid], tracks[frame_index, valid], method=cv2.RANSAC,
+            ransacReprojThreshold=3.0, maxIters=500, confidence=0.99,
+        )
+        if transform is None:
+            displacement = np.median(tracks[frame_index, valid] - source[valid], axis=0)
+            point = anchor + displacement
+            inlier_fraction = 1.0
+        else:
+            point = transform[:, :2] @ anchor + transform[:, 2]
+            inlier_fraction = float(np.mean(inliers)) if inliers is not None else 1.0
+        width, height = observation.target_size
+        if not np.isfinite(point).all() or not (0 <= point[0] < width and 0 <= point[1] < height):
+            continue
+        output[frame_index] = point
+        output_visibility[frame_index] = True
+        support_fraction = float(valid.mean())
+        output_confidence[frame_index] = float(
+            np.clip(np.median(confidence[frame_index, valid]) * support_fraction * inlier_fraction, 0.0, 1.0)
+        )
+    return output, output_visibility, output_confidence
+
+
 class CoTrackerExtractor:
     """Lazy wrapper around the official CoTracker3 offline model.
 
@@ -182,6 +277,7 @@ class CoTrackerExtractor:
         target_size: tuple[int, int],
         polygon_normalized: list[list[float]] | None = None,
         query_points: np.ndarray | None = None,
+        query_frame_indices: np.ndarray | None = None,
     ) -> PointTrackObservation:
         if len(frame_paths) < 2:
             raise ValueError("at least two video frames are required")
@@ -198,10 +294,15 @@ class CoTrackerExtractor:
             query_points = validate_query_points(
                 query_points, height=height, width=width
             )
+        query_frames = validate_query_frame_indices(
+            query_frame_indices,
+            num_queries=len(query_points),
+            num_frames=len(frame_paths),
+        )
         torch = self.torch
         video = torch.from_numpy(frames).permute(0, 3, 1, 2).unsqueeze(0).float().to(self.device)
         queries = torch.from_numpy(
-            np.concatenate([np.zeros((len(query_points), 1), dtype=np.float32), query_points], axis=1)
+            np.concatenate([query_frames[:, None].astype(np.float32), query_points], axis=1)
         ).unsqueeze(0).to(self.device)
         with torch.inference_mode():
             output = self.model(video, queries)
@@ -226,6 +327,7 @@ class CoTrackerExtractor:
             query_points=query_points,
             source_size=source_size,
             target_size=target_size,
+            query_frame_indices=query_frames,
         )
 
 
