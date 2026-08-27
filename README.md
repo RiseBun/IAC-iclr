@@ -46,6 +46,13 @@ now uses real continuous NAVSIM frames. It confirms the long-horizon contract, b
 also shows that longitudinal accuracy degrades at 4 seconds; speed remains a
 diagnostic probe, not a formal causal metric.
 
+The first capability ablation that applies the history-calibrated persistent flow
+scale is frozen in
+`configs/navsim_continuous_decoder_longitudinal_residual_v5_scale_apply.json`.
+On the 78-sample run it reduces speed MAE from `0.740` to `0.657 m/s` and
+forward-displacement MAE from `0.977` to `0.944 m`, while the Level-1 causal gate
+remains closed.
+
 The full-method search and the proposed persistent-scale/global-residual repair are
 documented in [Level 1 longitudinal solution search and V5 plan](docs/LEVEL1_LONGITUDINAL_SOLUTION_SEARCH_20260827_ZH.md).
 

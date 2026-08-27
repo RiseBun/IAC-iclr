@@ -194,6 +194,26 @@ evaluation scenes（`10` 条可评估样本）上，joint pose coverage 为 `0.9
 被场景隔离地校准**，同时暴露出当前米制纵向/横向几何仍不够尖锐；它没有改善点估计
 MAE，也不能单独支撑 WAM 因果结论。
 
+### 6.2 V5 历史尺度校正消融
+
+在完全相同的 78 条输入上，仅将 V5 的
+`persistent_scale_calibration.apply_correction` 从 `false` 改为 `true`，其余
+RAFT、地平面、残差和 decoder 参数保持不变。47 条可评估样本的结果为：
+
+| 指标 | V4/V5 未应用校正 | V5 应用历史尺度校正 | 变化 |
+|---|---:|---:|---:|
+| speed MAE | 0.740 m/s | 0.657 m/s | -11.2% |
+| acceleration MAE | 0.721 m/s² | 0.626 m/s² | -13.2% |
+| `delta-speed` MAE | 0.779 m/s | 0.697 m/s | -10.6% |
+| forward displacement MAE | 0.977 m | 0.944 m | -3.3% |
+| lateral displacement MAE | 0.254 m | 0.249 m | -1.9% |
+
+独立 evaluation scenes 上重新校准后，joint pose coverage 为 `0.973`；米制
+translation/forward MAE 分别为 `0.819 m/0.707 m`，优于未应用校正版本的
+`0.932 m/0.822 m`。不过 conformal 半径仍为 `x=3.910 m`、`y=1.455 m`、
+`heading=0.154 rad`，说明共享历史尺度能改善点估计和纵向趋势，但尚未解决
+横向/航向区间的尖锐度，也没有通过正式纵向增量门槛。
+
 ## 7. 下一步能力目标
 
 1. V3 已验证后处理式相对速度残差不能跨场景稳定超过 CA-CYR。
