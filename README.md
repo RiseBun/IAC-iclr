@@ -40,6 +40,9 @@ now uses real continuous NAVSIM frames. It confirms the long-horizon contract, b
 also shows that longitudinal accuracy degrades at 4 seconds; speed remains a
 diagnostic probe, not a formal causal metric.
 
+The full-method search and the proposed persistent-scale/global-residual repair are
+documented in [Level 1 longitudinal solution search and V5 plan](docs/LEVEL1_LONGITUDINAL_SOLUTION_SEARCH_20260827_ZH.md).
+
 ![Converged IAC continuous foresight-action architecture](docs/figures/continuous_foresight_alignment_v1.svg)
 
 The Level 1 longitudinal branch and its fail-closed next-step boundary are shown in
