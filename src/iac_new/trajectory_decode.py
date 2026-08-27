@@ -146,6 +146,141 @@ def _sparse_predicted_flows(
     return np.stack(outputs), np.stack(validities)
 
 
+def estimate_temporal_flow_scale_state(
+    trajectory: np.ndarray,
+    observed_flows: np.ndarray,
+    support_weights: np.ndarray,
+    *,
+    camera_to_ego: np.ndarray,
+    intrinsics: np.ndarray,
+    image_size: tuple[int, int],
+    depths_m: np.ndarray | None = None,
+    minimum_flow_scale_px: float = 1.0,
+    initial_scale: float = 1.0,
+    initial_scale_std: float = 0.10,
+    process_noise: float = 0.03,
+    measurement_noise: float = 0.08,
+    max_points: int = 900,
+    max_scale_change: float = 0.25,
+    max_log_innovation: float = 0.20,
+) -> dict[str, Any]:
+    """Estimate a smooth future flow-scale state from image/geometric agreement.
+
+    ``observed/predicted`` ratios are measured on the same static support used
+    by the candidate-blind decoder.  A scalar random-walk/Kalman update keeps
+    the scale anchored to the history prior instead of independently
+    renormalizing each future interval.  This is an image-side consistency
+    diagnostic, never an action-derived calibration.
+    """
+    trajectory = np.asarray(trajectory, dtype=np.float64)
+    observed = np.asarray(observed_flows, dtype=np.float64)
+    weights = np.asarray(support_weights, dtype=np.float64)
+    if trajectory.ndim != 2 or trajectory.shape[1] != 3:
+        raise ValueError("trajectory must have shape [T,3]")
+    if observed.ndim != 4 or observed.shape[-1] != 2 or observed.shape[0] != len(trajectory):
+        raise ValueError("observed_flows must have shape [T,H,W,2] matching trajectory")
+    if weights.shape != observed.shape[:-1]:
+        raise ValueError("support_weights must match observed_flows")
+    values = [
+        initial_scale,
+        initial_scale_std,
+        process_noise,
+        measurement_noise,
+        max_scale_change,
+        max_log_innovation,
+    ]
+    if not np.all(np.isfinite(values)) or initial_scale <= 0.0 or initial_scale_std < 0.0:
+        raise ValueError("scale state parameters must be finite and positive")
+    if process_noise < 0.0 or measurement_noise <= 0.0 or max_scale_change <= 0.0 or max_log_innovation <= 0.0:
+        raise ValueError("invalid temporal scale state noise or change bound")
+    if max_points < 20 or minimum_flow_scale_px <= 0.0:
+        raise ValueError("max_points and minimum_flow_scale_px are invalid")
+    pixel_xy, sampled_observed, sampled_weights = _sample_pixels(
+        observed.astype(np.float32), weights.astype(np.float32), max_points=int(max_points)
+    )
+    predicted, predicted_valid = _sparse_predicted_flows(
+        trajectory,
+        camera_to_ego,
+        intrinsics,
+        pixel_xy,
+        image_size=image_size,
+        depths_m=depths_m,
+    )
+    mean = float(initial_scale)
+    variance = float(initial_scale_std**2)
+    rows: list[dict[str, Any]] = []
+    corrections: list[float] = []
+    for index in range(len(trajectory)):
+        observed_norm = np.linalg.norm(sampled_observed[index], axis=1)
+        predicted_norm = np.linalg.norm(predicted[index], axis=1)
+        valid = predicted_valid[index]
+        valid &= sampled_weights[index] > 0.0
+        valid &= np.isfinite(observed_norm) & np.isfinite(predicted_norm)
+        valid &= observed_norm >= float(minimum_flow_scale_px)
+        valid &= predicted_norm >= float(minimum_flow_scale_px) * 0.25
+        ratios = observed_norm[valid] / np.maximum(predicted_norm[valid], 1e-6)
+        ratios = ratios[np.isfinite(ratios) & (ratios > 0.05) & (ratios < 20.0)]
+        prior_mean = mean
+        prior_variance = variance + float(process_noise**2)
+        if len(ratios) >= 20:
+            measurement = float(np.median(ratios))
+            mad = float(1.4826 * np.median(np.abs(ratios - measurement)))
+            innovation = abs(float(np.log(max(measurement, 1e-6) / max(prior_mean, 1e-6))))
+            accepted = innovation <= float(max_log_innovation)
+            if accepted:
+                measurement_variance = max(float(measurement_noise**2), (mad / np.sqrt(len(ratios))) ** 2)
+                gain = prior_variance / (prior_variance + measurement_variance)
+                proposed = prior_mean + gain * (measurement - prior_mean)
+                delta = np.clip(proposed - prior_mean, -float(max_scale_change), float(max_scale_change))
+                mean = float(np.clip(prior_mean + delta, 0.5, 2.0))
+                variance = float(max((1.0 - gain) * prior_variance, 1e-8))
+                available = True
+            else:
+                gain = 0.0
+                mean = float(np.clip(prior_mean, 0.5, 2.0))
+                variance = float(prior_variance)
+                available = False
+        else:
+            measurement = None
+            mad = None
+            gain = 0.0
+            innovation = None
+            accepted = False
+            mean = float(np.clip(prior_mean, 0.5, 2.0))
+            variance = float(prior_variance)
+            available = False
+        std = float(np.sqrt(max(variance, 1e-8)))
+        corrections.append(float(np.clip(1.0 / mean, 0.5, 2.0)))
+        rows.append({
+            "interval_index": index,
+            "valid_points": int(len(ratios)),
+            "available": available,
+            "measurement_scale": measurement,
+            "measurement_mad": mad,
+            "log_innovation": innovation,
+            "innovation_accepted": bool(available),
+            "kalman_gain": float(gain),
+            "scale_posterior": {
+                "q05": float(max(mean - 1.645 * std, 1e-3)),
+                "q50": mean,
+                "q95": float(mean + 1.645 * std),
+            },
+            "future_flow_correction": corrections[-1],
+        })
+    return {
+        "protocol": "temporal-shared-flow-scale-v1",
+        "available": bool(any(row["available"] for row in rows)),
+        "initial_scale_posterior": {
+            "q05": float(max(initial_scale - 1.645 * initial_scale_std, 1e-3)),
+            "q50": float(initial_scale),
+            "q95": float(initial_scale + 1.645 * initial_scale_std),
+        },
+        "rows": rows,
+        "future_flow_corrections": corrections,
+        "action_waypoint_used": False,
+    }
+
+
 def _objective(
     trajectory: np.ndarray,
     observed: np.ndarray,

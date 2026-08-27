@@ -8,6 +8,7 @@ from iac_new.trajectory_decode import (
     _kinematic_smoothness_penalty,
     compare_continuous_trajectory,
     decode_continuous_trajectory,
+    estimate_temporal_flow_scale_state,
     integrate_piecewise_controls,
 )
 
@@ -188,6 +189,47 @@ class TrajectoryDecodeTest(unittest.TestCase):
         self.assertEqual(directional["score_components"], ["lateral", "yaw", "curvature"])
         self.assertEqual(joint["score_components"][-1], "speed")
         self.assertLess(directional["weighted_mean_joint_error"], joint["weighted_mean_joint_error"])
+
+    def test_temporal_scale_state_is_smooth_and_action_blind(self) -> None:
+        times = np.asarray([0.5, 1.0], dtype=np.float64)
+        trajectory = integrate_piecewise_controls(
+            times, speeds_mps=np.asarray([8.0, 8.0]), curvatures_1pm=np.zeros(2)
+        )
+        camera_to_ego = np.eye(4, dtype=np.float64)
+        camera_to_ego[:3, :3] = np.asarray(
+            [[0.0, 0.0, 1.0], [-1.0, 0.0, 0.0], [0.0, -1.0, 0.0]]
+        )
+        camera_to_ego[:3, 3] = [0.0, 0.0, 1.5]
+        intrinsics = np.asarray(
+            [[70.0, 0.0, 40.0], [0.0, 70.0, 32.0], [0.0, 0.0, 1.0]]
+        )
+        from iac_new.trajectory_decode import _sample_pixels, _sparse_predicted_flows
+
+        yy, xx = np.indices((64, 80), dtype=np.float64)
+        points = np.stack([xx, yy], axis=-1).reshape(-1, 2)
+        predicted, valid = _sparse_predicted_flows(
+            trajectory, camera_to_ego, intrinsics, points,
+            image_size=(80, 64), depths_m=None,
+        )
+        observed = (predicted * 1.2).reshape(2, 64, 80, 2).astype(np.float32)
+        weights = np.where(valid.reshape(2, 64, 80), 1.0, 0.0).astype(np.float32)
+        result = estimate_temporal_flow_scale_state(
+            trajectory, observed, weights,
+            camera_to_ego=camera_to_ego, intrinsics=intrinsics,
+            image_size=(80, 64), max_points=200,
+        )
+        self.assertTrue(result["available"])
+        estimates = [row["scale_posterior"]["q50"] for row in result["rows"]]
+        self.assertTrue(all(value > 1.0 for value in estimates))
+        self.assertLess(abs(estimates[1] - estimates[0]), 0.25 + 1e-9)
+        self.assertFalse(result["action_waypoint_used"])
+        rejected = estimate_temporal_flow_scale_state(
+            trajectory, observed, weights,
+            camera_to_ego=camera_to_ego, intrinsics=intrinsics,
+            image_size=(80, 64), max_points=200, max_log_innovation=0.05,
+        )
+        self.assertFalse(rejected["available"])
+        self.assertTrue(all(row["innovation_accepted"] is False for row in rejected["rows"]))
 
 
 if __name__ == "__main__":

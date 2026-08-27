@@ -53,6 +53,13 @@ On the 78-sample run it reduces speed MAE from `0.740` to `0.657 m/s` and
 forward-displacement MAE from `0.977` to `0.944 m`, while the Level-1 causal gate
 remains closed.
 
+The gated future shared-scale diagnostic is frozen in
+`configs/navsim_continuous_decoder_longitudinal_residual_v6_temporal_scale.json`.
+It performs a candidate-blind per-interval scale update only when the innovation
+is consistent with the history prior; otherwise it abstains. On the same 78
+samples, only `110/560` future intervals passed the innovation gate, so this
+variant remains a diagnostic challenger rather than the default decoder.
+
 The full-method search and the proposed persistent-scale/global-residual repair are
 documented in [Level 1 longitudinal solution search and V5 plan](docs/LEVEL1_LONGITUDINAL_SOLUTION_SEARCH_20260827_ZH.md).
 

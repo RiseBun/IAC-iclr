@@ -20,7 +20,11 @@ from iac_new.protocol import read_jsonl, validate_record, write_jsonl
 from iac_new.road_relative import road_relative_posterior
 from iac_new.road_structure import build_road_structure, extract_road_boundaries, boundary_pixels_to_ego, fuse_ego_boundary_keypoints
 from iac_new.scoring import interval_observability, polygon_mask
-from iac_new.trajectory_decode import compare_continuous_trajectory, decode_continuous_trajectory
+from iac_new.trajectory_decode import (
+    compare_continuous_trajectory,
+    decode_continuous_trajectory,
+    estimate_temporal_flow_scale_state,
+)
 from iac_new.continuous_motion import history_only_motion_profile
 from iac_new.temporal_geometry import (
     RoadStateFilter,
@@ -437,6 +441,44 @@ def evaluate_record(record: dict[str, Any], extractor: RaftFlowExtractor, config
             initial_curvatures_1pm=initial_curvatures,
         )
     decoded = decode_continuous_trajectory(**decoder_kwargs)
+    future_scale_state = None
+    future_scale_cfg = persistent_scale_cfg.get("future_state", {})
+    if (
+        bool(persistent_scale_cfg.get("enabled", False))
+        and bool(future_scale_cfg.get("enabled", False))
+        and persistent_scale is not None
+        and persistent_scale.get("available")
+    ):
+        try:
+            future_scale_state = estimate_temporal_flow_scale_state(
+                np.asarray(decoded["trajectory"], dtype=np.float64),
+                observed,
+                support_weights,
+                camera_to_ego=record["camera_to_ego"],
+                intrinsics=flow.intrinsics,
+                image_size=(width, height),
+                depths_m=depths,
+                minimum_flow_scale_px=float(config["score"].get("minimum_flow_scale_px", 1.0)),
+                initial_scale=1.0,
+                initial_scale_std=float(future_scale_cfg.get("initial_scale_std", 0.10)),
+                process_noise=float(future_scale_cfg.get("process_noise", 0.03)),
+                measurement_noise=float(future_scale_cfg.get("measurement_noise", 0.08)),
+                max_points=int(future_scale_cfg.get("max_points", 900)),
+                max_scale_change=float(future_scale_cfg.get("max_scale_change", 0.25)),
+                max_log_innovation=float(future_scale_cfg.get("max_log_innovation", 0.20)),
+            )
+            if bool(future_scale_cfg.get("apply_correction", False)) and future_scale_state.get("available"):
+                corrections = np.asarray(
+                    future_scale_state["future_flow_corrections"], dtype=np.float32
+                )
+                corrected_observed = np.asarray(observed, dtype=np.float32) * corrections[:, None, None, None]
+                decoder_kwargs["observed_flows"] = corrected_observed
+                decoded = decode_continuous_trajectory(**decoder_kwargs)
+                future_scale_state["applied_to_decoder"] = True
+            elif future_scale_state is not None:
+                future_scale_state["applied_to_decoder"] = False
+        except (ValueError, np.linalg.LinAlgError) as error:
+            future_scale_state = {"available": False, "error": str(error)}
     road_structure = None
     temporal_road_state = None
     ego_frame_boundary_fusion = None
@@ -647,7 +689,9 @@ def evaluate_record(record: dict[str, Any], extractor: RaftFlowExtractor, config
         "ego_frame_boundary_fusion": ego_frame_boundary_fusion,
         "boundary_propagation": boundary_propagation,
         "temporal_scale_calibration": temporal_scale,
-        "persistent_scale_calibration": persistent_scale,
+        "persistent_scale_calibration": None if persistent_scale is None else persistent_scale | {
+            "future_state": future_scale_state,
+        },
         "flow_reliability": None if flow_reliability is None else {
             key: value for key, value in flow_reliability.items() if key not in {"weights", "photometric_weights", "tile_weights", "repaired_flows"}
         } | {"decoder_blend_alpha": float(np.clip(reliability_cfg.get("decoder_blend_alpha", 0.0), 0.0, 1.0))},

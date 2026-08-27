@@ -214,6 +214,30 @@ translation/forward MAE 分别为 `0.819 m/0.707 m`，优于未应用校正版�
 `heading=0.154 rad`，说明共享历史尺度能改善点估计和纵向趋势，但尚未解决
 横向/航向区间的尖锐度，也没有通过正式纵向增量门槛。
 
+### 6.3 V6 未来共享尺度状态（门控消融）
+
+V6 在第一次 candidate-blind 解码后，对每个未来间隔估计
+`observed/predicted` flow 比值，并以历史尺度为先验做随机游走/Kalman 更新。
+只有对数创新小于 `0.20` 的间隔才允许更新；异常创新只记录并 abstain，不触发
+重解码。这一门控是必要的，因为未经门控的版本会把真实运动模型误差误判为尺度漂移。
+
+78 条样本上共有 `560` 个未来间隔，其中 `110` 个创新被接受，只有 `33/78` 个样本
+形成可用未来尺度状态。V6 的 raw 结果为：
+
+| 指标 | V5 历史校正 | V6 未来状态门控 |
+|---|---:|---:|
+| speed MAE | 0.657 m/s | 0.664 m/s |
+| acceleration MAE | 0.626 m/s² | 0.594 m/s² |
+| forward displacement MAE | 0.944 m | 0.931 m |
+| translation MAE | 1.022 m | 1.038 m |
+| joint pose raw coverage | 0.156 | 0.114 |
+
+独立 evaluation scenes 校准后 joint pose coverage 为 `0.973`，translation/forward
+MAE 为 `0.818 m/0.722 m`，与 V5 基本相当。结论是：**未来共享状态的接口和
+fail-closed 机制已经可复现，但当前 flow 观测不足以支持稳定的未来尺度更新**。
+V6 暂作为安全诊断消融，不升级为 Level-1 默认 decoder；下一步需要长程对应或
+独立 metric-depth challenger 提供真正独立的尺度观测。
+
 ## 7. 下一步能力目标
 
 1. V3 已验证后处理式相对速度残差不能跨场景稳定超过 CA-CYR。
