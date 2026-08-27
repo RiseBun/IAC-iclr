@@ -116,6 +116,7 @@ def estimate_history_flow_scale(
     min_flow_px: float = 0.5,
     max_points: int = 1600,
     min_predicted_flow_px: float = 0.25,
+    correction_shrinkage: float = 0.25,
 ) -> dict[str, Any]:
     """Estimate a persistent observed/predicted flow scale from history only.
 
@@ -142,6 +143,8 @@ def estimate_history_flow_scale(
         raise ValueError("consistency_masks must match history_flows")
     if min_flow_px <= 0.0 or min_predicted_flow_px <= 0.0:
         raise ValueError("flow thresholds must be positive")
+    if not 0.0 <= correction_shrinkage <= 1.0:
+        raise ValueError("correction_shrinkage must be in [0, 1]")
     poses = [se2_to_transform(*row[:3]) @ camera for row in states]
     ratios: list[float] = []
     rows: list[dict[str, Any]] = []
@@ -202,7 +205,11 @@ def estimate_history_flow_scale(
     spread = float(_mad(np.asarray(ratios, dtype=np.float64)))
     # Downstream correction maps observed flow back to the metric homography
     # convention: predicted ~= observed * (1 / observed_to_predicted_scale).
-    correction = float(np.clip(1.0 / max(scale, 1e-6), 0.5, 2.0))
+    correction = float(np.clip(
+        np.exp(-float(correction_shrinkage) * np.log(max(scale, 1e-6))),
+        0.8,
+        1.25,
+    ))
     return {
         "protocol": "history-only-persistent-flow-scale-v1",
         "available": True,
@@ -211,6 +218,7 @@ def estimate_history_flow_scale(
         "scale_mad": spread,
         "scale_posterior": {"q05": max(scale - 1.645 * spread, 1e-3), "q50": scale, "q95": scale + 1.645 * spread},
         "future_flow_correction": correction,
+        "correction_shrinkage": float(correction_shrinkage),
         "rows": rows,
     }
 

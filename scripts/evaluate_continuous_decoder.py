@@ -119,6 +119,7 @@ def evaluate_record(record: dict[str, Any], extractor: RaftFlowExtractor, config
                     min_flow_px=float(persistent_scale_cfg.get("min_flow_px", 0.5)),
                     max_points=int(persistent_scale_cfg.get("max_points", 1600)),
                     min_predicted_flow_px=float(persistent_scale_cfg.get("min_predicted_flow_px", 0.25)),
+                    correction_shrinkage=float(persistent_scale_cfg.get("correction_shrinkage", 0.25)),
                 )
                 if persistent_scale.get("available"):
                     observed = np.asarray(observed, dtype=np.float32) * float(
