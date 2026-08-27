@@ -123,9 +123,55 @@ def evaluate_record(
             raise ValueError("actor-box-grid requires actor-motion-reference-v3")
         box = np.asarray(actor["actor_boxes_xyxy"][query_index], dtype=np.float64)
         box *= np.asarray([scale[0], scale[1], scale[0], scale[1]])
-        query_points = actor_box_query_points(
-            box, height=target_size[1], width=target_size[0]
-        )
+        try:
+            query_points = actor_box_query_points(
+                box, height=target_size[1], width=target_size[0]
+            )
+        except ValueError as error:
+            scaled_reference_pixels = reference_pixels * scale
+            post_query_gold = image_visibility & (np.arange(len(times)) > query_index)
+            metric_rows = [{
+                "sample_id": row["sample_id"],
+                "chain_type": row["chain_type"],
+                "actor_id": actor["actor_id"],
+                "time_s": float(times[index]),
+                "observability": 0.0,
+                "abstain": True,
+                "abstain_reason": "actor_box_too_small",
+                "future_action_used": False,
+                "candidate_bank_used": False,
+            } for index in np.flatnonzero(post_query_gold)]
+            return {
+                "sample_id": row["sample_id"],
+                "chain_type": row["chain_type"],
+                "actor_id": actor["actor_id"],
+                "query_frame_index": query_index,
+                "query_time_s": float(times[query_index]),
+                "query_mode": query_mode,
+                "num_query_points": 0,
+                "sample_abstain_reason": str(error),
+                "num_post_query_gold_frames": int(post_query_gold.sum()),
+                "num_pixel_scored_frames": 0,
+                "pixel_errors_px": [],
+                "pixel_tracks": {
+                    "predicted_distorted_uv": [[None, None]] * len(times),
+                    "reference_distorted_uv": _nullable_pixels(scaled_reference_pixels),
+                    "reference_visibility": image_visibility.tolist(),
+                    "tracker_visibility": [False] * len(times),
+                    "scored": [False] * len(times),
+                },
+                "predicted_result": {
+                    "protocol": "actor-relative-motion-v1",
+                    "available": False,
+                    "status": "abstain",
+                    "abstain_reason": "actor_box_too_small",
+                    "observability": 0.0,
+                    "support": [],
+                },
+                "reference_result": None,
+                "projection": None,
+                "metric_rows": metric_rows,
+            }
     else:
         query_points = anchor_query.reshape(1, 2).astype(np.float32)
     observation = extractor.observe(
@@ -205,6 +251,8 @@ def evaluate_record(
         ref_position = reference_positions[index]
         pred_speed = _q50(pred_item, "closing_speed_mps")
         ref_speed = _q50(ref_item, "closing_speed_mps")
+        pred_lateral_speed = _q50(pred_item, "lateral_speed_mps")
+        ref_lateral_speed = _q50(ref_item, "lateral_speed_mps")
         finite_pair = np.isfinite(pred_position).all() and np.isfinite(ref_position).all()
         abstain = (
             predicted_result.get("status") != "usable"
@@ -221,6 +269,8 @@ def evaluate_record(
             "reference_distance_m": float(np.linalg.norm(ref_position)) if finite_pair else None,
             "predicted_closing_speed_mps": pred_speed,
             "reference_closing_speed_mps": ref_speed,
+            "predicted_lateral_speed_mps": pred_lateral_speed,
+            "reference_lateral_speed_mps": ref_lateral_speed,
             "predicted_ttc_s": None if pred_item is None else pred_item.get("corridor_conflict_ttc_s"),
             "reference_ttc_s": None if ref_item is None else ref_item.get("corridor_conflict_ttc_s"),
             "observability": float(predicted_result.get("observability", 0.0)),

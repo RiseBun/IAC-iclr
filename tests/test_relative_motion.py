@@ -93,6 +93,8 @@ class RelativeMotionTest(unittest.TestCase):
                 "reference_distance_m": 11.0,
                 "predicted_closing_speed_mps": 3.0,
                 "reference_closing_speed_mps": 2.5,
+                "predicted_lateral_speed_mps": 0.5,
+                "reference_lateral_speed_mps": 0.25,
                 "predicted_ttc_s": 3.3,
                 "reference_ttc_s": 4.4,
                 "observability": 0.9,
@@ -103,6 +105,8 @@ class RelativeMotionTest(unittest.TestCase):
                 "reference_distance_m": 20.0,
                 "predicted_closing_speed_mps": -1.0,
                 "reference_closing_speed_mps": -1.0,
+                "predicted_lateral_speed_mps": -0.5,
+                "reference_lateral_speed_mps": -0.25,
                 "predicted_ttc_s": None,
                 "reference_ttc_s": None,
                 "observability": 0.5,
@@ -114,6 +118,8 @@ class RelativeMotionTest(unittest.TestCase):
         self.assertAlmostEqual(report["coverage"], 2.0 / 3.0)
         self.assertAlmostEqual(report["distance_mae_m"], 0.5)
         self.assertAlmostEqual(report["closing_speed_mae_mps"], 0.25)
+        self.assertAlmostEqual(report["lateral_speed_mae_mps"], 0.25)
+        self.assertEqual(report["num_lateral_scored"], 2)
         self.assertEqual(len(report["coverage_risk"]), 4)
         self.assertEqual(report["num_reference_dangerous"], 0)
         self.assertIsNone(report["dangerous_ttc_recall"])

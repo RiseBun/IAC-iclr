@@ -418,6 +418,19 @@ def evaluate_relative_motion_metrics(
         == sign(float(row["reference_closing_speed_mps"]))
         for row in scored
     ]
+    lateral_scored = []
+    for row in scored:
+        try:
+            predicted_lateral = float(row["predicted_lateral_speed_mps"])
+            reference_lateral = float(row["reference_lateral_speed_mps"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if np.isfinite(predicted_lateral) and np.isfinite(reference_lateral):
+            lateral_scored.append((predicted_lateral, reference_lateral))
+    lateral_error = [abs(predicted - reference) for predicted, reference in lateral_scored]
+    lateral_sign_correct = [
+        sign(predicted) == sign(reference) for predicted, reference in lateral_scored
+    ]
     true_positive = false_positive = false_negative = 0
     for row in scored:
         predicted_ttc = row.get("predicted_ttc_s")
@@ -463,6 +476,11 @@ def evaluate_relative_motion_metrics(
         "distance_mae_m": float(np.mean(distance_error)) if len(distance_error) else None,
         "closing_speed_mae_mps": float(np.mean(speed_error)) if len(speed_error) else None,
         "closing_sign_accuracy": float(np.mean(sign_correct)) if sign_correct else None,
+        "num_lateral_scored": len(lateral_scored),
+        "lateral_speed_mae_mps": float(np.mean(lateral_error)) if lateral_error else None,
+        "lateral_direction_accuracy": (
+            float(np.mean(lateral_sign_correct)) if lateral_sign_correct else None
+        ),
         "dangerous_ttc_threshold_s": float(dangerous_ttc_s),
         "num_predicted_dangerous": int(predicted_positive),
         "num_reference_dangerous": int(reference_positive),
