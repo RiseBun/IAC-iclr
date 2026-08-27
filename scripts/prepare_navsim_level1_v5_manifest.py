@@ -60,7 +60,9 @@ def _clean_row(row: dict[str, Any], *, role: str, overlap_count: int) -> dict[st
     if len(logged) != 1:
         raise ValueError(f"{row.get('sample_id')}: expected exactly one logged candidate")
     cleaned = dict(row)
-    cleaned["candidates"] = logged
+    # Keep the candidate bank for protocol compatibility. Level 1 code must use
+    # only gt_candidate_id after image decoding, never expose candidates upstream.
+    cleaned["candidates"] = list(row["candidates"])
     cleaned["gt_candidate_id"] = "logged"
     cleaned["metadata"] = metadata
     return cleaned
