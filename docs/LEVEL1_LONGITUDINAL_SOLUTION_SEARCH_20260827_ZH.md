@@ -101,7 +101,7 @@ s_i ~= metric_displacement(history_state_i, history_state_{i+1})
 
 ### 4.3 全局纵向优化
 
-将 V4 的独立 interval residual 改为 8 个间隔联合优化：
+将 V4 的独立 interval residual 改为 8 个间隔联合优化。当前首先落地的可验证切片是二阶残差约束；它允许线性制动/加速趋势，但抑制没有几何证据支持的曲率型漂移：
 
 ```text
 v_k = v_history_prior(k) + r_k
@@ -109,6 +109,7 @@ v_{k+1} - v_k = dt * a_k
 L = L_flow_reprojection
   + lambda_scale * L_scale_posterior
   + lambda_smooth * ||Delta a||_1
+  + lambda_curvature * ||Delta^2 r||_2^2
   + lambda_prior * L_history_boundary
 ```
 

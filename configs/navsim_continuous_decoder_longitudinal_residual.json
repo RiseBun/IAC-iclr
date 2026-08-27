@@ -29,6 +29,7 @@
     "maximum_speed_residual_mps": 3.0,
     "speed_residual_weight": 0.02,
     "speed_residual_smoothness_weight": 0.05,
+    "speed_residual_curvature_weight": 0.08,
     "profile_radius": 0.12,
     "lateral_tolerance_m": 0.50,
     "yaw_tolerance_rad": 0.10,

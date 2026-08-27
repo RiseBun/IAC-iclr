@@ -363,6 +363,9 @@ def evaluate_record(record: dict[str, Any], extractor: RaftFlowExtractor, config
         speed_residual_smoothness_weight=float(
             decoder_cfg.get("speed_residual_smoothness_weight", 0.05)
         ),
+        speed_residual_curvature_weight=float(
+            decoder_cfg.get("speed_residual_curvature_weight", 0.0)
+        ),
         profile_radius=float(decoder_cfg.get("profile_radius", 0.12)),
         interval_observability=quality_vector,
         speed_uncertainty_thresholds=(

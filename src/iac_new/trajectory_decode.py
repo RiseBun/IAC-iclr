@@ -343,6 +343,7 @@ def _longitudinal_residual_penalty(
     maximum_residual_mps: float,
     residual_weight: float,
     residual_smoothness_weight: float,
+    residual_curvature_weight: float = 0.0,
 ) -> float:
     """Regularize image-driven speed residuals around a frozen history curve."""
     speeds = np.asarray(speeds_mps, dtype=np.float64)
@@ -353,7 +354,7 @@ def _longitudinal_residual_penalty(
         raise ValueError("speed and history curves must be finite")
     if maximum_residual_mps <= 0.0 or not np.isfinite(maximum_residual_mps):
         raise ValueError("maximum_residual_mps must be finite and positive")
-    if min(residual_weight, residual_smoothness_weight) < 0.0:
+    if min(residual_weight, residual_smoothness_weight, residual_curvature_weight) < 0.0:
         raise ValueError("longitudinal residual weights must be non-negative")
     residual = speeds - history
     if np.any(np.abs(residual) > maximum_residual_mps + 1e-6):
@@ -364,7 +365,15 @@ def _longitudinal_residual_penalty(
         0.0 if len(residual) < 2
         else float(np.mean((np.diff(residual) / scale) ** 2))
     )
-    return float(residual_weight * magnitude + residual_smoothness_weight * smoothness)
+    curvature = (
+        0.0 if len(residual) < 3
+        else float(np.mean((np.diff(residual, n=2) / scale) ** 2))
+    )
+    return float(
+        residual_weight * magnitude
+        + residual_smoothness_weight * smoothness
+        + residual_curvature_weight * curvature
+    )
 
 
 def _fit_once(
@@ -387,6 +396,7 @@ def _fit_once(
     maximum_speed_residual_mps: float = 3.0,
     speed_residual_weight: float = 0.02,
     speed_residual_smoothness_weight: float = 0.05,
+    speed_residual_curvature_weight: float = 0.0,
     road_masks: np.ndarray | None = None,
     road_prior_weight: float = 0.0,
     road_half_width_m: float = 1.1,
@@ -475,6 +485,7 @@ def _fit_once(
                 maximum_residual_mps=maximum_speed_residual_mps,
                 residual_weight=speed_residual_weight,
                 residual_smoothness_weight=speed_residual_smoothness_weight,
+                residual_curvature_weight=speed_residual_curvature_weight,
             )
         return float(energy)
 
@@ -535,6 +546,7 @@ def decode_continuous_trajectory(
     maximum_speed_residual_mps: float = 3.0,
     speed_residual_weight: float = 0.02,
     speed_residual_smoothness_weight: float = 0.05,
+    speed_residual_curvature_weight: float = 0.0,
     initial_curvatures_1pm: np.ndarray | None = None,
     road_masks: np.ndarray | None = None,
     road_prior_weight: float = 0.0,
@@ -580,7 +592,7 @@ def decode_continuous_trajectory(
         raise ValueError("smoothness weights must be non-negative")
     if maximum_speed_residual_mps <= 0.0 or not np.isfinite(maximum_speed_residual_mps):
         raise ValueError("maximum_speed_residual_mps must be finite and positive")
-    if min(speed_residual_weight, speed_residual_smoothness_weight) < 0.0:
+    if min(speed_residual_weight, speed_residual_smoothness_weight, speed_residual_curvature_weight) < 0.0:
         raise ValueError("speed residual weights must be non-negative")
     if interval_observability is None:
         interval_quality = np.mean(weights > 0.0, axis=(1, 2)).astype(np.float64)
@@ -646,6 +658,7 @@ def decode_continuous_trajectory(
                 maximum_speed_residual_mps=maximum_speed_residual_mps,
                 speed_residual_weight=speed_residual_weight,
                 speed_residual_smoothness_weight=speed_residual_smoothness_weight,
+                speed_residual_curvature_weight=speed_residual_curvature_weight,
                 max_iterations=max_iterations,
                 road_masks=road_masks,
                 road_prior_weight=road_prior_weight,
@@ -712,6 +725,7 @@ def decode_continuous_trajectory(
                     maximum_residual_mps=maximum_speed_residual_mps,
                     residual_weight=speed_residual_weight,
                     residual_smoothness_weight=speed_residual_smoothness_weight,
+                    residual_curvature_weight=speed_residual_curvature_weight,
                 )
             profile.append((candidate, energy))
     profile.sort(key=lambda item: item[1])
@@ -799,6 +813,7 @@ def decode_continuous_trajectory(
             "maximum_speed_residual_mps": float(maximum_speed_residual_mps),
             "speed_residual_weight": float(speed_residual_weight),
             "speed_residual_smoothness_weight": float(speed_residual_smoothness_weight),
+            "speed_residual_curvature_weight": float(speed_residual_curvature_weight),
             "road_prior_enabled": bool(road_masks is not None and road_prior_weight > 0.0),
             "road_prior_weight": float(road_prior_weight),
             "road_half_width_m": float(road_half_width_m),
