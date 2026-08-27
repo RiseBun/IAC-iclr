@@ -1,6 +1,7 @@
 import numpy as np
 
 from scripts.build_wam_level1_continuous_manifest import build_manifest
+from scripts.evaluate_continuous_motion_alignment import _level1_input_audit
 
 
 def _base():
@@ -34,6 +35,10 @@ def test_builds_generated_level1_row_without_realized_future_state():
     assert len(row["future_frame_paths"]) == 8
     assert "realized_future_ego_state" not in row["metadata"]
     assert row["metadata"]["action_waypoint_used_by_image_branch"] is False
+    assert row["action_trajectory_source"] == "wam_action_head"
+    assert np.asarray(row["action_trajectory"]).shape == (8, 3)
+    audit = _level1_input_audit(row, "action")
+    assert audit["ready"] is True
 
 
 def test_rejects_pending_generation():

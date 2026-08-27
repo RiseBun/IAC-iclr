@@ -13,6 +13,7 @@ def _row():
         "future_images": [f"frame-{i}.png" for i in range(8)],
         "future_times_s": np.arange(1, 9, dtype=float) / 2.0,
         "action_condition": {"trajectory": np.zeros((8, 3)).tolist()},
+        "action_source": "wam_action_head",
     }
 
 
@@ -36,3 +37,11 @@ def test_rejects_wrong_frame_count():
     report = audit_rows([row])
     assert report["formal_level1_input_ready"] is False
     assert "future_images_must_have_8_paths" in report["issues"][0]["issues"]
+
+
+def test_rejects_missing_action_source():
+    row = _row()
+    row.pop("action_source")
+    report = audit_rows([row])
+    assert report["formal_level1_input_ready"] is False
+    assert "missing_independent_action_source" in report["issues"][0]["issues"]

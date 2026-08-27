@@ -74,7 +74,9 @@ def audit_rows(
         if action_array.shape != (expected_future_count, 3) or not np.all(np.isfinite(action_array)):
             row_issues.append("independent_action_head_trajectory_invalid")
         action_source = str(row.get("action_source") or (row.get("metadata") or {}).get("action_source") or "")
-        if action_source and action_source in {"logged", "oracle", "proxy", "candidate"}:
+        if not action_source:
+            row_issues.append("missing_independent_action_source")
+        elif action_source in {"logged", "oracle", "proxy", "candidate"}:
             row_issues.append("action_source_is_not_independent")
         if row.get("realized_future_ego_state") is not None or (row.get("metadata") or {}).get("realized_future_ego_state") is not None:
             row_issues.append("realized_future_state_leakage")

@@ -106,6 +106,7 @@ def build_manifest(
             "wam_model_id": model_id,
             "future_images_source": "wam_generated",
             "action_source": "wam_action_head",
+            "action_trajectory_source": "wam_action_head",
             "candidate_blind_image_branch": True,
             "action_waypoint_used_by_image_branch": False,
             "realized_future_state_available_to_image_branch": False,
@@ -122,6 +123,8 @@ def build_manifest(
             "wam_model_id": model_id,
             "branch_id": branch_id,
             "generated_future_id": branch_id,
+            "action_trajectory": action_array.tolist(),
+            "action_trajectory_source": "wam_action_head",
             "metadata": metadata,
         })
         row.pop("realized_future_ego_state", None)
