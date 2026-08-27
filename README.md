@@ -57,6 +57,11 @@ validate the measurement probe and do not support a WAM causal claim.
 The Level 1 longitudinal branch and its fail-closed next-step boundary are shown in
 [the updated flow chart](docs/figures/level1_continuous_alignment_v2.png).
 
+For actual WAM-generated future images, use
+`scripts/build_wam_level1_continuous_manifest.py`. It keeps historical calibration
+inputs and the WAM action reference, but removes future realized state from the
+image-side record.
+
 ## Method
 
 The frozen image-side probe is more than an optical-flow model:

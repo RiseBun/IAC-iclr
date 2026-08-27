@@ -82,6 +82,13 @@ matched-shuffle 只使用历史速度和未来区间数量匹配，速度 calipe
 且存在 `wam_model_id`。同时满足真实 WAM action head 和 `8 帧/4 秒` 协议，
 才有正式 Level 1 资格。
 
+正式 WAM 图像评测使用 `scripts/build_wam_level1_continuous_manifest.py` 将固定
+NAVSIM base manifest 与已完成的 WAM branch 输出合并。合并后的 manifest 使用
+WAM 生成的 8 张未来图像，保留历史状态、时间戳和相机标定，新增
+`wam_action_head` 作为最后比较阶段的 action reference，并删除
+`realized_future_ego_state`，防止未来真值进入图像分支。没有完成生成的 branch
+直接失败。NAVSIM realized future 只用于 Level 0 measurement validation。
+
 ## 6. NAVSIM 78 样本代理结果
 
 当前数据是 logged future、`4 帧/2 秒`，因此只能验证指标行为，不能作为正式 WAM Level 1 结论。
