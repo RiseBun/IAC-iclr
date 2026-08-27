@@ -1,0 +1,9 @@
+{
+  "input_records": 78,
+  "converted_records": 78,
+  "failed_records": 0,
+  "history_count": 4,
+  "future_count": 8,
+  "future_horizon_s": 4.0,
+  "failures": []
+}

@@ -35,6 +35,11 @@ keeps speed as an evaluation-sufficient behavioral signal. It is stable on the
 78-sample run, but the manifest is still 4 future frames/2 seconds and the
 longitudinal incremental gate is not resolved; no causal success claim is made.
 
+The native [8-frame/4-second validation](docs/LEVEL1_LONGITUDINAL_OPTIMIZER_V4_8F_ZH.md)
+now uses real continuous NAVSIM frames. It confirms the long-horizon contract, but
+also shows that longitudinal accuracy degrades at 4 seconds; speed remains a
+diagnostic probe, not a formal causal metric.
+
 ![Converged IAC continuous foresight-action architecture](docs/figures/continuous_foresight_alignment_v1.svg)
 
 The Level 1 longitudinal branch and its fail-closed next-step boundary are shown in

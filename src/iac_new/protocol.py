@@ -63,8 +63,10 @@ def validate_record(row: dict[str, Any], *, manifest_root: Path) -> dict[str, An
         if native_protocol:
             if len(history) < 2 or len(future) < 1:
                 raise ValueError(f"{sample_id}: native protocol requires at least 2 history and 1 future frame")
-        elif len(history) != 4 or len(future) != 4:
-            raise ValueError(f"{sample_id}: the new protocol requires exactly 4 history and 4 future frames")
+        elif len(history) != 4 or len(future) not in (4, 8):
+            raise ValueError(
+                f"{sample_id}: the explicit protocol requires 4 history and either 4 or 8 future frames"
+            )
         history_times = np.asarray(row.get("history_times_s"), dtype=np.float64)
         future_times = np.asarray(row.get("future_times_s"), dtype=np.float64)
         if history_times.shape != (len(history),) or future_times.shape != (len(future),):
@@ -76,7 +78,11 @@ def validate_record(row: dict[str, Any], *, manifest_root: Path) -> dict[str, An
         frames = history + future
         timestamps = np.concatenate([history_times, future_times])
         history_count = len(history)
-        protocol_variant = f"native_history{len(history)}_future{len(future)}" if native_protocol else "history4_future4"
+        protocol_variant = (
+            f"native_history{len(history)}_future{len(future)}"
+            if native_protocol
+            else f"history4_future{len(future)}"
+        )
     else:
         # Compatibility for the first exploratory manifests. New experiments
         # should use the explicit 4+4 fields above.

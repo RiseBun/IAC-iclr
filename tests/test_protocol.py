@@ -75,6 +75,25 @@ class ProtocolTest(unittest.TestCase):
         self.assertTrue(np.allclose(normalized["future_times_s"], [0.5, 1.0, 1.5, 2.0]))
         self.assertEqual(normalized["candidates"][0]["trajectory"].shape, (4, 3))
 
+    def test_explicit_history_future_8_frame_contract(self) -> None:
+        row = _record()
+        row.pop("frame_paths")
+        row.pop("frame_times_s")
+        row["history_frame_paths"] = ["h0.jpg", "h1.jpg", "h2.jpg", "h3.jpg"]
+        row["future_frame_paths"] = [f"f{i}.jpg" for i in range(8)]
+        row["history_times_s"] = [10.0, 10.5, 11.0, 11.5]
+        row["future_times_s"] = [12.0 + 0.5 * i for i in range(8)]
+        row["candidates"] = [
+            {"candidate_id": "a", "trajectory": [[1.0, 0.0, 0.0]] * 8},
+            {"candidate_id": "b", "trajectory": [[1.0, 0.2, 0.0]] * 8},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            normalized = validate_record(row, manifest_root=Path(directory))
+        self.assertEqual(normalized["protocol_variant"], "history4_future8")
+        self.assertEqual(len(normalized["frame_paths"]), 12)
+        self.assertTrue(np.allclose(normalized["future_times_s"], np.arange(0.5, 4.5, 0.5)))
+        self.assertEqual(normalized["candidates"][0]["trajectory"].shape, (8, 3))
+
 
 if __name__ == "__main__":
     unittest.main()
