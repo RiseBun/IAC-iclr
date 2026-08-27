@@ -20,6 +20,8 @@ interpretation and stratification only.
 The converged method, data gates, 78-sample results, and GitHub-rendered flow
 chart are in [Continuous Foresight-Action Alignment V1](docs/CONTINUOUS_FORESIGHT_ALIGNMENT_V1_ZH.md).
 
+![Converged IAC continuous foresight-action architecture](docs/figures/continuous_foresight_alignment_v1.svg)
+
 ## Method
 
 The frozen image-side probe is more than an optical-flow model:

@@ -16,31 +16,12 @@ m(t) = [v(t), a(t), v_lat(t), yaw_rate(t), curvature(t)]
 
 ## 2. 收敛后的唯一主流程
 
-```mermaid
-flowchart TB
-    H[历史图像 + 仅历史自车状态] --> F[WAM 生成未来图像<br/>8 帧 / 4 秒 / 2 Hz]
-    F --> R[RAFT-Large 前后向光流<br/>一致性 + 动态区域抑制]
-    R --> G[地面几何与相机标定<br/>历史速度提供尺度先验]
-    G --> D[候选无关连续解码器<br/>可观测性 + 拒答]
-    D --> MF[图像运动后验 m_F(t)<br/>v, a, v_lat, yaw_rate, curvature]
+![IAC 连续前视—动作因果一致性收敛架构](figures/continuous_foresight_alignment_v1.svg)
 
-    H --> A[同一 WAM action head]
-    A --> W[action waypoint<br/>在图像解码完成前隔离]
-    W --> K[确定性运动学变换]
-    K --> MA[动作运动曲线 m_A(t)]
-
-    MF --> C[连续 Foresight-Action Alignment<br/>逐时刻误差 + 区间覆盖 + coverage-risk]
-    MA --> C
-
-    RC[同一历史的 risk / clear 干预对] --> DF[Delta m_F(t) = m_F,risk - m_F,clear]
-    RC --> DA[Delta m_A(t) = m_A,risk - m_A,clear]
-    DF --> CC[Counterfactual Continuous Consistency<br/>符号、幅度、时序一致性]
-    DA --> CC
-
-    C --> E[事后事件解释层<br/>刹车 / 转向 / 停车等]
-    CC --> E
-    E --> O[独立闭环状态与任务成功<br/>Foresight-Conditioned Success]
-```
+可编辑源文件见
+[`continuous_foresight_alignment_v1.mmd`](figures/continuous_foresight_alignment_v1.mmd)，
+高分辨率位图见
+[`continuous_foresight_alignment_v1.png`](figures/continuous_foresight_alignment_v1.png)。
 
 该图只有一条主信息流：连续量先完成测量和比较，事件在结果之后产生。行人或车辆识别不是主流程要求；它们仅在将来研究交互风险时作为可选扩展。
 
