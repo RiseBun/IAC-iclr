@@ -103,16 +103,20 @@ with observability, abstention, posterior coverage, and coverage-risk curves.
 RAFT-Large remains the default because it completed 78/78 samples; SEA-RAFT is
 a challenger. Their paired speed difference is not statistically resolved.
 
-For Level-1 distance alignment, `relative` is now the primary mode: each image
+For Level-1 distance alignment, `relative_observable` is now the primary mode: each image
 and action profile is independently normalized by its terminal forward progress,
 so the score measures temporal progress shape without requiring absolute metric
 scale. Absolute metric distance remains an uncertainty-labelled diagnostic.
 The 78-sample proxy passes the relative history/shuffle/reversal gates. The
 frozen longitudinal-first stratification contains 48 acceleration, 5 braking,
 14 lateral-turn, and 11 straight-cruise samples across 19 scenes. After
-observability and relative-amplitude abstention, 40 samples are usable (37
-acceleration, 3 lateral-turn); braking and straight-cruise coverage is still
-insufficient, so this does not yet establish cross-scenario WAM validity.
+strict speed-state and relative-amplitude abstention, 40 samples are usable for
+the speed-synchronous lane (37 acceleration, 3 lateral-turn). The distance-only
+`relative_observable` lane decouples pose progress from uncertain speed states:
+69 samples are usable (47 acceleration, 4 braking, 13 lateral-turn, 5
+straight-cruise), and all three relative specificity gates remain positive.
+This validates the distance measurement lane, but does not by itself establish
+cross-scenario WAM causality.
 
 Rebuild the stratified manifest with:
 

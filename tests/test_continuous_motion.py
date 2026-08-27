@@ -101,6 +101,21 @@ class ContinuousMotionTest(unittest.TestCase):
         assert relative["metrics"]["forward_displacement_profile"]["endpoint_abs_error"] == 0.0
         assert shape["leakage_audit"]["action_used_for_image_scale"] is False
 
+    def test_relative_distance_can_use_pose_when_speed_is_uncertain(self) -> None:
+        times = [0.5, 1.0, 1.5, 2.0]
+        value = decoder([4.0, 4.0, 4.0, 4.0])
+        for row in value["speed_support"]:
+            row["status"] = "uncertain"
+        imagined = image_motion_profile(value, times, initial_speed_mps=4.0)
+        action = trajectory_to_motion_profile(value["trajectory"], times, initial_speed_mps=4.0)
+        strict = compare_distance_profiles(imagined, action, scale_mode="relative")
+        pose_only = compare_distance_profiles(
+            imagined, action, scale_mode="relative", include_uncertain=True
+        )
+        assert strict["status"] == "abstain"
+        assert pose_only["status"] == "ok"
+        assert pose_only["metrics"]["forward_displacement_profile"]["mae"] == 0.0
+
     def test_pose_alignment_compares_forward_lateral_and_heading(self) -> None:
         times = [0.5, 1.0, 1.5, 2.0]
         imagined = image_motion_profile(decoder([4.0] * 4, curvature=0.02), times, initial_speed_mps=4.0)

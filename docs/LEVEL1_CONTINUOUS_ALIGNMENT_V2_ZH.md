@@ -230,6 +230,24 @@ straight_cruise 尚无足够可用样本。这说明**统计门槛已通过，�
 分层脚本为 `scripts/build_level1_relative_stratified_manifest.py`，当前协议产物为
 `results/navsim_level1_relative_stratified_net_speed_v2.jsonl` 及对应报告。
 
+### 6.5 Pose-only 相对进展通道
+
+上面的严格通道会把速度状态为 `uncertain` 的时间点排除。这个门控对于速度 MAE
+是必要的，但对于只比较 `progress_m` 形状是不必要的耦合。当前 evaluator 因此额外
+输出 `relative_observable`：它允许速度后验为 `uncertain`，但仍要求位移轨迹有限、
+终点幅度至少 `0.5 m`，并保留独立的 history/shuffle/reversal 对照。该通道不改变
+速度、加速度或正式 Level-1 action 对齐的资格。
+
+在同一 V5 输出上，`relative_observable` 有 69 条可评估样本，profile MAE 为
+`0.02858`，increment MAE 为 `0.01307`，curve cosine 为 `0.99850`。四类分层分别为
+`acceleration=47`、`braking=4`、`lateral_turn=13`、`straight_cruise=5`。相对
+history、matched-shuffle、time-reversal 的 lift 分别为 `0.01831`、`0.01664`、
+`4.08105`，95% CI 下界分别为 `0.00827`、`0.00850`、`3.81664`，三个门槛均通过。
+
+因此，Level-1 的距离主指标采用 `relative_observable`，严格 `relative` 保留为
+速度状态同步的敏感性分析。这个结果仍只证明连续位移测量和时间顺序特异性，不能
+单独证明 WAM 的反事实因果性。
+
 ### 6.2 V5 历史尺度校正消融
 
 在完全相同的 78 条输入上，仅将 V5 的

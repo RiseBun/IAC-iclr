@@ -315,6 +315,103 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
         }
 
 
+def add_relative_distance_controls(records: list[dict[str, Any]]) -> None:
+    """Evaluate relative displacement independently of speed observability.
+
+    The image decoder can have uncertain speed intervals while still producing
+    usable pose samples. Relative displacement therefore gets its own control
+    lane with explicit ``include_uncertain=True`` semantics; it never changes
+    the strict speed/acceleration eligibility set.
+    """
+    eligible = [
+        record for record in records
+        if record.get("distance_alignment_relative_observable", {}).get("status") == "ok"
+    ]
+    for record in eligible:
+        actual = record["distance_alignment_relative_observable"]
+        history = compare_distance_profiles(
+            record["history_motion_profile"],
+            record["reference_motion_profile"],
+            scale_mode="relative",
+            include_uncertain=True,
+            allow_non_image_source=True,
+        )
+        if record["image_motion_profile"].get("source") in {
+            "history_anchored_image_residual_decoder",
+            "history_anchored_optimizer_residual_decoder",
+        }:
+            reversed_profile = reanchor_longitudinal_control_profile(
+                record["image_motion_profile"],
+                record["history_motion_profile"],
+                record["future_times_s"],
+                reverse=True,
+            )
+        else:
+            reversed_profile = _retime_profile(
+                record["image_motion_profile"], record["future_times_s"], reverse=True
+            )
+        reversed_relative = compare_distance_profiles(
+            reversed_profile,
+            record["reference_motion_profile"],
+            scale_mode="relative",
+            include_uncertain=True,
+        )
+        candidates = [
+            other for other in eligible
+            if other["sample_id"] != record["sample_id"]
+            and len(other["future_times_s"]) == len(record["future_times_s"])
+        ]
+        matched = {"status": "unavailable", "reason": "no usable relative-distance donor"}
+        if candidates:
+            target_speed = float(record["history_motion_profile"]["history_anchor"]["speed_mps"])
+            donor = min(
+                candidates,
+                key=lambda other: (
+                    abs(float(other["history_motion_profile"]["history_anchor"]["speed_mps"]) - target_speed),
+                    str(other["sample_id"]),
+                ),
+            )
+            speed_gap = abs(
+                float(donor["history_motion_profile"]["history_anchor"]["speed_mps"]) - target_speed
+            )
+            if speed_gap <= 0.5:
+                if donor["image_motion_profile"].get("source") in {
+                    "history_anchored_image_residual_decoder",
+                    "history_anchored_optimizer_residual_decoder",
+                }:
+                    shuffled = reanchor_longitudinal_control_profile(
+                        donor["image_motion_profile"],
+                        record["history_motion_profile"],
+                        record["future_times_s"],
+                    )
+                else:
+                    shuffled = _retime_profile(donor["image_motion_profile"], record["future_times_s"])
+                matched_relative = compare_distance_profiles(
+                    shuffled,
+                    record["reference_motion_profile"],
+                    scale_mode="relative",
+                    include_uncertain=True,
+                )
+                matched = {
+                    "status": "ok",
+                    "donor_sample_id": donor["sample_id"],
+                    "history_speed_gap_mps": speed_gap,
+                    "comparison": matched_relative,
+                    "lift": _distance_gain(matched_relative, actual),
+                }
+        record["relative_distance_controls_observable"] = {
+            "status": "ok",
+            "actual": actual,
+            "history": {"comparison": history, "lift": _distance_gain(history, actual)},
+            "matched_shuffle": matched,
+            "time_reversed": {
+                "comparison": reversed_relative,
+                "lift": _distance_gain(reversed_relative, actual),
+            },
+            "stratum": _relative_distance_stratum(record),
+        }
+
+
 def _mean_ci(values: list[float], rng: np.random.Generator) -> dict[str, Any]:
     if not values:
         return {"mean": None, "median": None, "confidence_interval_95": None, "samples": 0}
@@ -328,7 +425,11 @@ def _mean_ci(values: list[float], rng: np.random.Generator) -> dict[str, Any]:
     }
 
 
-def _incremental_evidence(valid: list[dict[str, Any]]) -> dict[str, Any]:
+def _incremental_evidence(
+    valid: list[dict[str, Any]],
+    *,
+    relative_records: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     rng = np.random.default_rng(0)
     output: dict[str, Any] = {"foresight_gain_over_history": {}, "future_specificity": {}}
     for field in MOTION_FIELDS:
@@ -438,6 +539,61 @@ def _incremental_evidence(valid: list[dict[str, Any]]) -> dict[str, Any]:
         }
         for name, bucket in sorted(strata.items())
     }
+    if relative_records is not None:
+        relaxed_controls = {
+            "history": [],
+            "matched_shuffle": [],
+            "time_reversed": [],
+        }
+        for record in relative_records:
+            controls = record.get("relative_distance_controls_observable", {})
+            for name in relaxed_controls:
+                value = (
+                    controls.get(name, {})
+                    .get("lift", {})
+                    .get("absolute_lift")
+                )
+                if value is not None and np.isfinite(value):
+                    relaxed_controls[name].append(float(value))
+        relaxed_evidence = {}
+        for name, values in relaxed_controls.items():
+            relaxed_evidence[name] = _mean_ci(values, rng) | {
+                "positive_fraction": None if not values else float(np.mean(np.asarray(values) > 0.0)),
+                "definition": "control_relative_progress_mae_minus_actual_relative_progress_mae",
+            }
+        relaxed_evidence["gate"] = {
+            name: bool(
+                relaxed_evidence[name]["confidence_interval_95"]
+                and relaxed_evidence[name]["confidence_interval_95"][0] > 0.0
+            )
+            for name in relaxed_controls
+        }
+        relaxed_evidence["relative_progress_signal_resolved"] = all(relaxed_evidence["gate"].values())
+        relaxed_evidence["criterion"] = "lower bound of paired sample bootstrap 95% CI must exceed zero"
+        output["relative_distance_specificity_observable"] = relaxed_evidence
+        relaxed_strata: dict[str, dict[str, Any]] = {}
+        for record in relative_records:
+            controls = record.get("relative_distance_controls_observable", {})
+            value = (
+                controls.get("actual", {})
+                .get("metrics", {})
+                .get("forward_displacement_profile", {})
+                .get("mae")
+            )
+            if value is None or not np.isfinite(value):
+                continue
+            name = str(controls.get("stratum", "unknown"))
+            bucket = relaxed_strata.setdefault(name, {"actual_mae": [], "sample_ids": []})
+            bucket["actual_mae"].append(float(value))
+            bucket["sample_ids"].append(record["sample_id"])
+        output["relative_distance_strata_observable"] = {
+            name: {
+                "samples": len(bucket["actual_mae"]),
+                "mean_actual_relative_mae": float(np.mean(bucket["actual_mae"])),
+                "sample_ids": bucket["sample_ids"],
+            }
+            for name, bucket in sorted(relaxed_strata.items())
+        }
     behavior_pairs = {
         "history": [
             (
@@ -584,6 +740,7 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
         ("metric", "distance_alignment_metric"),
         ("scale_free", "distance_alignment_scale_free"),
         ("relative", "distance_alignment_relative"),
+        ("relative_observable", "distance_alignment_relative_observable"),
     ):
         distance_records = [
             record.get(record_key, {}) for record in records
@@ -606,7 +763,7 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
             "unit": (
                 "m" if mode == "metric"
                 else "normalized_terminal_forward_displacement"
-                if mode == "relative"
+                if mode in {"relative", "relative_observable"}
                 else "normalized_max_abs_forward_displacement"
             ),
         }
@@ -726,7 +883,7 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
         "raw_absolute_image_metrics": raw_metrics,
         "forward_distance_alignment": distance_summary,
         "se2_pose_alignment": pose_summary,
-        "primary_distance_alignment": "relative",
+        "primary_distance_alignment": "relative_observable",
         "primary_pose_alignment": "relative",
         "se2_pose_posterior": {
             "samples": len(pose_posterior_records),
@@ -745,7 +902,14 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
             "relative_distance_specificity",
             "coverage_risk",
         ],
-        "incremental_evidence": _incremental_evidence(valid),
+        "incremental_evidence": _incremental_evidence(
+            valid,
+            relative_records=[
+                record
+                for record in records
+                if record.get("relative_distance_controls_observable", {}).get("status") == "ok"
+            ],
+        ),
         "coverage_risk_curve": coverage_risk,
         "speed_posterior": speed_posterior,
         "speed_posterior_coverage": speed_posterior["empirical_coverage"],
@@ -884,6 +1048,9 @@ def main() -> None:
         distance_alignment_relative = compare_distance_profiles(
             imagined, reference, scale_mode="relative", include_uncertain=args.include_uncertain
         )
+        distance_alignment_relative_observable = compare_distance_profiles(
+            imagined, reference, scale_mode="relative", include_uncertain=True
+        )
         pose_alignment_relative = compare_pose_profiles(
             imagined, reference, scale_mode="relative", include_uncertain=args.include_uncertain
         )
@@ -947,6 +1114,7 @@ def main() -> None:
             "distance_alignment_metric": distance_alignment_metric,
             "distance_alignment_scale_free": distance_alignment_scale_free,
             "distance_alignment_relative": distance_alignment_relative,
+            "distance_alignment_relative_observable": distance_alignment_relative_observable,
             "pose_alignment_metric": pose_alignment_metric,
             "pose_alignment_scale_free": pose_alignment_scale_free,
             "pose_alignment_relative": pose_alignment_relative,
@@ -958,6 +1126,7 @@ def main() -> None:
             "foresight_gain": foresight_gain(comparison, history_comparison),
         })
     add_specificity_controls(records, include_uncertain=args.include_uncertain)
+    add_relative_distance_controls(records)
     report = {
         "summary": aggregate(records, args.reference_source),
         "calibration_application_split": args.calibration_application_split,
