@@ -48,6 +48,8 @@ def _native_to_decoder_row(row: dict[str, Any], index: int) -> dict[str, Any]:
         "intrinsics": row.get("camera_intrinsic") or row.get("intrinsics"),
         "distortion": row.get("camera_distortion") or row.get("distortion") or [],
         "camera_to_ego": row.get("camera_to_ego"),
+        "history_ego_state": row.get("history_ego_state"),
+        "history_times_s": row.get("history_times_s", [-1.5, -1.0, -0.5, 0.0]),
         "metric_depth_path": row.get("metric_depth_path"),
         # The generic image protocol requires a bank, but this native
         # validation never scores or selects from it. The duplicate is only a
