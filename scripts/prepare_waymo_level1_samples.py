@@ -173,18 +173,36 @@ def main() -> None:
                     continue
                 states = _relative_states(rows, anchor)
                 hidx, fidx = indices[:4], indices[4:]
+                intrinsics = None
+                distortion = []
+                camera_to_ego = None
+                if calibration:
+                    k = calibration["intrinsics"]
+                    intrinsics = [[k["f_u"], 0.0, k["c_u"]], [0.0, k["f_v"], k["c_v"]], [0.0, 0.0, 1.0]]
+                    distortion = [k["k1"], k["k2"], k["p1"], k["p2"], k["k3"]]
+                    camera_to_ego = np.asarray(calibration["extrinsic_transform"], dtype=np.float64).reshape(4, 4).tolist()
+                future_states = [states[i] for i in fidx]
                 row = {
                     "dataset": "waymo_perception_v2",
+                    "sample_id": f"{segment}:{rows[anchor]['timestamp_micros']}",
+                    "scene_id": segment,
+                    "source_key": f"waymo_perception_v2:{segment}:{rows[anchor]['timestamp_micros']}",
+                    "scene_name": segment,
                     "segment_id": segment,
                     "anchor_timestamp_micros": rows[anchor]["timestamp_micros"],
                     "camera": "FRONT",
                     "camera_calibration": str((Path("camera") / f"{segment}.json").as_posix()) if calibration else None,
+                    "intrinsics": intrinsics,
+                    "distortion": distortion,
+                    "camera_to_ego": camera_to_ego,
                     "history_times_s": [-1.5, -1.0, -0.5, 0.0],
                     "future_times_s": [0.5 * i for i in range(1, 9)],
                     "history_images": [image_paths[rows[i]["timestamp_micros"]] for i in hidx],
                     "future_images": [image_paths[rows[i]["timestamp_micros"]] for i in fidx],
                     "history_ego_state": [states[i] for i in hidx],
-                    "realized_future_ego_state": [states[i] for i in fidx],
+                    "realized_future_ego_state": future_states,
+                    "trajectory": [state[:3] for state in future_states],
+                    "future_images_source": "native_dataset_realized",
                     "state_reference_source": "waymo_vehicle_pose_plus_camera_velocity",
                     "continuous_source_fps": 10.0,
                     "protocol": "iac-level1-continuous-v1",
