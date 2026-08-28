@@ -133,6 +133,11 @@ distance and closing/lateral speed intervals, TTC, observability, and
 abstention. It is implemented and synthetically tested, but is not yet a
 formally validated 78-sample metric.
 
+Waymo storage is external to the repository. On the current server,
+`datasets/waymo_external` points to `/mnt/slurmfs-4090node3/user_data/zchen897/iac_waymo`
+on a filesystem with about 11 TB free. See
+[`docs/WAYMO_STORAGE_LAYOUT_ZH.md`](docs/WAYMO_STORAGE_LAYOUT_ZH.md) before downloading.
+
 ## Evaluation levels
 
 1. **Level 0, measurement validity:** compare image-derived motion with an
