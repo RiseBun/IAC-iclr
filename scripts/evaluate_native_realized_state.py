@@ -16,6 +16,7 @@ try:
 except ModuleNotFoundError:
     from evaluate_continuous_decoder import evaluate_record  # type: ignore[no-redef]
 from iac_new.flow import RaftFlowExtractor
+from iac_new.sea_raft_flow import SeaRaftFlowExtractor
 from iac_new.perception import build_perception
 from iac_new.protocol import read_jsonl, validate_record, write_jsonl
 from iac_new.state_protocol import states_to_trajectory
@@ -24,6 +25,15 @@ from iac_new.wam_metrics import ego_state_action_compatibility, normalized_ego_s
 
 def _json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _json_default(value: Any) -> Any:
+    """Serialize numpy diagnostics emitted by the native-state evaluator."""
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def _native_to_decoder_row(row: dict[str, Any], index: int) -> dict[str, Any]:
@@ -86,13 +96,20 @@ def main() -> None:
     rows = [_native_to_decoder_row(row, index) for index, row in enumerate(raw)]
     records = [validate_record(row, manifest_root=args.manifest.parent) for row in rows]
     flow_cfg = config["flow"]
-    extractor = RaftFlowExtractor(
-        model_size=str(flow_cfg["model"]), device=args.device,
-        updates=int(flow_cfg["updates"]), batch_size=int(flow_cfg["batch_size"]),
-        forward_backward=bool(flow_cfg["forward_backward"]),
-        fb_abs_threshold_px=float(flow_cfg["fb_abs_threshold_px"]),
-        fb_relative_threshold=float(flow_cfg["fb_relative_threshold"]),
-    )
+    if str(flow_cfg.get("backend", "torchvision_raft")) == "sea_raft":
+        extractor = SeaRaftFlowExtractor(
+            checkpoint=str(flow_cfg["checkpoint"]),
+            device=args.device,
+            iters=int(flow_cfg.get("iters", 12)),
+        )
+    else:
+        extractor = RaftFlowExtractor(
+            model_size=str(flow_cfg["model"]), device=args.device,
+            updates=int(flow_cfg["updates"]), batch_size=int(flow_cfg["batch_size"]),
+            forward_backward=bool(flow_cfg["forward_backward"]),
+            fb_abs_threshold_px=float(flow_cfg["fb_abs_threshold_px"]),
+            fb_relative_threshold=float(flow_cfg["fb_relative_threshold"]),
+        )
     perception = build_perception(config, device=args.device)
     results = []
     errors = []
@@ -141,7 +158,9 @@ def main() -> None:
         "results": results,
     }
     write_jsonl(args.output, results)
-    args.output.with_name(f"{args.output.stem}_summary.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    args.output.with_name(f"{args.output.stem}_summary.json").write_text(
+        json.dumps(report, indent=2, default=_json_default) + "\n", encoding="utf-8"
+    )
     print(json.dumps({key: value for key, value in report.items() if key != "results"}, indent=2))
 
 
