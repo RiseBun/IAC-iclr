@@ -28,6 +28,9 @@ def _read(path: Path) -> list[dict[str, Any]]:
 
 
 def _token(row: dict[str, Any]) -> str:
+    explicit = str(row.get("cache_token") or "")
+    if explicit:
+        return explicit
     source = str(row.get("source_key") or "")
     base = source.split("::", 1)[0]
     token = base.rsplit(":", 1)[-1]
@@ -124,7 +127,12 @@ def _local_state(simulated: np.ndarray, initial: Any, times: list[float], interv
 
 def run(rows: list[dict[str, Any]], cache_root: Path, *, horizon_s: float, interval_s: float, success_threshold: float) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     from navsim.common.dataloader import MetricCacheLoader
-    from navsim.evaluate.pdm_score import pdm_score_from_interpolated_trajectory, transform_trajectory
+    from navsim.evaluate.pdm_score import transform_trajectory
+    try:
+        from navsim.evaluate.pdm_score import pdm_score_from_interpolated_trajectory
+    except ImportError:
+        pdm_score_from_interpolated_trajectory = None
+        from navsim.evaluate.pdm_score import get_trajectory_as_array, pdm_score
     from navsim.planning.simulation.planner.pdm_planner.scoring.pdm_scorer import PDMScorer
     from navsim.planning.simulation.planner.pdm_planner.simulation.pdm_simulator import PDMSimulator
 
@@ -141,10 +149,22 @@ def run(rows: list[dict[str, Any]], cache_root: Path, *, horizon_s: float, inter
             simulator = PDMSimulator(sampling)
             scorer = PDMScorer(sampling)
             policy = _StaticCachedTraffic(sampling)
-            pdm_result, simulated_states = pdm_score_from_interpolated_trajectory(
-                metric_cache, pred, sampling, simulator, scorer, policy
-            )
-            score = float(pdm_result["pdm_score"].iloc[0])
+            if pdm_score_from_interpolated_trajectory is not None:
+                pdm_result, simulated_states = pdm_score_from_interpolated_trajectory(
+                    metric_cache, pred, sampling, simulator, scorer, policy
+                )
+                score = float(pdm_result["pdm_score"].iloc[0])
+            else:
+                # Older NAVSIM releases return a PDMResults dataclass and do
+                # not expose the newer interpolated-trajectory helper.
+                pdm_result = pdm_score(metric_cache, trajectory, sampling, simulator, scorer)
+                score = float(pdm_result.score)
+                pred_states = get_trajectory_as_array(
+                    pred, sampling, metric_cache.ego_state.time_point
+                )
+                simulated_states = simulator.simulate_proposals(
+                    pred_states[None, ...], metric_cache.ego_state
+                )[0]
             times = [float(x) for x in row.get("future_times_s") or []]
             realized = _local_state(simulated_states, metric_cache.ego_state, times, interval_s)
             enriched = dict(row)

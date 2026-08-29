@@ -85,3 +85,26 @@ manifest 与 motion-probe scores，并使用当前评分器复算：
 
 这次复算同时确认旧 manifest 有三项硬缺口：没有 history image 列表、没有相机标定字段、没有独立
 `realized_future_ego_state`/`task_success`。因此当前结果可以复现旧的 image-action response，不能绕过审计直接升级为正式 Level-2/3。
+
+## 2026-08-29 NAVSIM rollout staging
+
+为给后续任一 WAM 生成分支提供独立执行侧，我们从当前 78 条 Level-1 样本显式恢复
+`metadata.source_key`，并从原生 NAVSIM pkl 解析 `sample_prev` 作为 metric-cache token，禁止按时间最近邻猜测。
+脚本为 `scripts/build_navsim_rollout_staging_manifest.py`，输出三类动作条件：`logged/left/right`。
+
+服务器产物：
+
+```text
+/mnt/slurmfs-4090node1/homes/zchen897/work_dirs/closed_loop_recovered_20260829/navsim_78_rollout_staging.jsonl
+/mnt/slurmfs-4090node1/homes/zchen897/work_dirs/closed_loop_recovered_20260829/navsim_cache_aligned_rollout_staging.jsonl
+/mnt/slurmfs-4090node1/homes/zchen897/work_dirs/closed_loop_recovered_20260829/navsim_cache_aligned_rollout_realized.jsonl
+```
+
+全量 staging 为 `78 × 3 = 234` 个分支；当前服务器 mini cache 对该 log 只有 9 个精确命中 source，
+故 cache-aligned 子集为 9 twins / 27 branches。27/27 rollout 成功导出独立
+`realized_future_ego_state`，PDM `task_success` 为 `22/27 = 0.8148`。
+其余 69 个 source 没有对应 cache，已保留为待补 cache 的 staging，不计入任何正式指标。
+
+该结果只证明独立执行链已经可运行，不是 WAM 的 FCS：当前 staging 的未来图像仍为
+`wam_generated_pending`，动作条件也不是 WAM native action-head。接入 WAM 后必须按 `branch_id`
+join 生成图像、action-head、realized state 和 task score，评分器继续 fail-closed。
