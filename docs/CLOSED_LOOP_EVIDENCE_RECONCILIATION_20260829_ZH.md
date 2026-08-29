@@ -66,3 +66,22 @@ DriveWAM 旧诊断的关键数值：
 4. 对通过 action-response gate 的 checkpoint，再补独立 simulator rollout，生成 `realized_future_ego_state` 和 `task_success`，最后计算 Level-2 CCFC 与 Level-3 FCS。
 
 当前正式评分器继续 fail-closed：没有逐分支独立 realized state 和任务成功标签时，不输出联合 WAM 分数。
+
+## 2026-08-29 归档恢复复算
+
+从 `iac_baseline_freeze_20260825.tar.gz` 恢复了 DrivingWorld 的 calibration/holdout
+manifest 与 motion-probe scores，并使用当前评分器复算：
+
+| split | twin / branch | CCFC | swap control | CC lift | diagonal Top-1 |
+|---|---:|---:|---:|---:|---:|
+| calibration | 12 / 24 | `0.4833` | `0.0205` | `0.4628` | `0.8333` |
+| holdout | 8 / 16 | `0.4038` | `0.0426` | `0.3612` | `0.8125` |
+
+复算输出位于服务器：
+
+```text
+/mnt/slurmfs-4090node1/homes/zchen897/work_dirs/closed_loop_recovered_20260829/
+```
+
+这次复算同时确认旧 manifest 有三项硬缺口：没有 history image 列表、没有相机标定字段、没有独立
+`realized_future_ego_state`/`task_success`。因此当前结果可以复现旧的 image-action response，不能绕过审计直接升级为正式 Level-2/3。
