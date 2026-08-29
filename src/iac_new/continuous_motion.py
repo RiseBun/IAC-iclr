@@ -811,9 +811,10 @@ def compare_pose_profiles(
     *,
     scale_mode: str = "metric",
     include_uncertain: bool = False,
+    allow_non_image_source: bool = False,
 ) -> dict[str, Any]:
     """Compare the time-indexed planar pose ``[x, y, heading]``."""
-    if image_profile.get("source") not in IMAGE_PROFILE_SOURCES:
+    if not allow_non_image_source and image_profile.get("source") not in IMAGE_PROFILE_SOURCES:
         raise ValueError("image_profile must be produced independently from action waypoints")
     if scale_mode not in {"metric", "scale_free", "relative", "arc_relative"}:
         raise ValueError("scale_mode must be metric, scale_free, relative, or arc_relative")

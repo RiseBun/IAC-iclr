@@ -71,6 +71,12 @@ heading 保持弧度单位。它比单独的 speed MAE 更接近“轨迹与图�
 8 帧反转控制下，25 个样本的 Fréchet/DTW 均值为 3.158/1.898（`x_end`）和 1.063/0.658（`arc`），
 均显著高于对应正常顺序结果。DTW 不得使用无约束窗口，且两者都不替代逐点 MAE、heading/yaw 和 curvature 门槛。
 
+在 8 帧/4 秒的 78 样本正式复核中，`arc_relative` pose translation MAE 为 `0.0538`（40 条严格可评估样本）。
+同一弧长归一下，history、matched-shuffle、time-reversal 三个样本级配对 bootstrap lift 分别为
+`0.062 [0.041, 0.084]`、`0.093 [0.056, 0.132]`、`0.543 [0.476, 0.614]`，三门下界均大于零，
+因此 `arc_pose_signal_resolved=true`。这说明图像侧轨迹形状具有超出历史、样本特异且按时间组织的测量信号，
+但仍不构成 WAM 的 future-to-action 因果证明。
+
 可复现实验脚本为 `scripts/compare_pose_distance_variants.py`，输出协议
 `pose-distance-variant-ablation-v1`。速度/绝对纵向进度仍是 shadow-only，不进入正式 Level-1 总分。
 

@@ -315,6 +315,105 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
         }
 
 
+def _pose_translation_mae(result: dict[str, Any]) -> float | None:
+    value = result.get("metrics", {}).get("se2_pose", {}).get("translation_mae")
+    return None if value is None else float(value)
+
+
+def _pose_lift(control: dict[str, Any], actual: dict[str, Any]) -> float | None:
+    control_value = _pose_translation_mae(control)
+    actual_value = _pose_translation_mae(actual)
+    return None if control_value is None or actual_value is None else float(control_value - actual_value)
+
+
+def add_arc_pose_controls(records: list[dict[str, Any]], *, include_uncertain: bool) -> None:
+    """Add history/order controls for the 8-frame arc-normalized pose lane."""
+    eligible = [
+        record for record in records
+        if record.get("pose_alignment_arc_relative", {}).get("status") == "ok"
+    ]
+    for record in eligible:
+        actual = record["pose_alignment_arc_relative"]
+        history = compare_pose_profiles(
+            record["history_motion_profile"],
+            record["reference_motion_profile"],
+            scale_mode="arc_relative",
+            include_uncertain=include_uncertain,
+            allow_non_image_source=True,
+        )
+        if record["image_motion_profile"].get("source") in {
+            "history_anchored_image_residual_decoder",
+            "history_anchored_optimizer_residual_decoder",
+        }:
+            reversed_profile = reanchor_longitudinal_control_profile(
+                record["image_motion_profile"],
+                record["history_motion_profile"],
+                record["future_times_s"],
+                reverse=True,
+            )
+        else:
+            reversed_profile = _retime_profile(
+                record["image_motion_profile"], record["future_times_s"], reverse=True
+            )
+        reversed_result = compare_pose_profiles(
+            reversed_profile,
+            record["reference_motion_profile"],
+            scale_mode="arc_relative",
+            include_uncertain=include_uncertain,
+        )
+        candidates = [
+            other for other in eligible
+            if other["sample_id"] != record["sample_id"]
+            and len(other["future_times_s"]) == len(record["future_times_s"])
+        ]
+        matched: dict[str, Any] = {
+            "status": "unavailable",
+            "reason": "no donor within 0.5 m/s history-speed caliper",
+        }
+        if candidates:
+            target_speed = float(record["history_motion_profile"]["history_anchor"]["speed_mps"])
+            donor = min(
+                candidates,
+                key=lambda other: (
+                    abs(float(other["history_motion_profile"]["history_anchor"]["speed_mps"]) - target_speed),
+                    str(other["sample_id"]),
+                ),
+            )
+            speed_gap = abs(float(donor["history_motion_profile"]["history_anchor"]["speed_mps"]) - target_speed)
+            if speed_gap <= 0.5:
+                if donor["image_motion_profile"].get("source") in {
+                    "history_anchored_image_residual_decoder",
+                    "history_anchored_optimizer_residual_decoder",
+                }:
+                    shuffled_profile = reanchor_longitudinal_control_profile(
+                        donor["image_motion_profile"],
+                        record["history_motion_profile"],
+                        record["future_times_s"],
+                    )
+                else:
+                    shuffled_profile = _retime_profile(donor["image_motion_profile"], record["future_times_s"])
+                shuffled_result = compare_pose_profiles(
+                    shuffled_profile,
+                    record["reference_motion_profile"],
+                    scale_mode="arc_relative",
+                    include_uncertain=include_uncertain,
+                )
+                matched = {
+                    "status": "ok",
+                    "donor_sample_id": donor["sample_id"],
+                    "history_speed_gap_mps": speed_gap,
+                    "comparison": shuffled_result,
+                    "lift": _pose_lift(shuffled_result, actual),
+                }
+        record["arc_pose_controls"] = {
+            "status": "ok",
+            "actual": actual,
+            "history": {"comparison": history, "lift": _pose_lift(history, actual)},
+            "matched_shuffle": matched,
+            "time_reversed": {"comparison": reversed_result, "lift": _pose_lift(reversed_result, actual)},
+        }
+
+
 def add_relative_distance_controls(records: list[dict[str, Any]]) -> None:
     """Evaluate relative displacement independently of speed observability.
 
@@ -520,6 +619,30 @@ def _incremental_evidence(
     relative_evidence["relative_progress_signal_resolved"] = all(relative_evidence["gate"].values())
     relative_evidence["criterion"] = "lower bound of paired sample bootstrap 95% CI must exceed zero"
     output["relative_distance_specificity"] = relative_evidence
+    arc_pose_controls = {"history": [], "matched_shuffle": [], "time_reversed": []}
+    for record in valid:
+        controls = record.get("arc_pose_controls", {})
+        for name in arc_pose_controls:
+            value = controls.get(name, {}).get("lift")
+            if value is not None and np.isfinite(value):
+                arc_pose_controls[name].append(float(value))
+    arc_pose_evidence = {
+        name: _mean_ci(values, rng) | {
+            "positive_fraction": None if not values else float(np.mean(np.asarray(values) > 0.0)),
+            "definition": "control_arc_pose_translation_mae_minus_actual_arc_pose_translation_mae",
+        }
+        for name, values in arc_pose_controls.items()
+    }
+    arc_pose_evidence["gate"] = {
+        name: bool(
+            arc_pose_evidence[name]["confidence_interval_95"]
+            and arc_pose_evidence[name]["confidence_interval_95"][0] > 0.0
+        )
+        for name in arc_pose_controls
+    }
+    arc_pose_evidence["arc_pose_signal_resolved"] = all(arc_pose_evidence["gate"].values())
+    arc_pose_evidence["criterion"] = "lower bound of paired sample bootstrap 95% CI must exceed zero"
+    output["arc_pose_alignment_specificity"] = arc_pose_evidence
     strata: dict[str, dict[str, Any]] = {}
     for record in valid:
         controls = record.get("relative_distance_controls", {})
@@ -1133,6 +1256,7 @@ def main() -> None:
             "foresight_gain": foresight_gain(comparison, history_comparison),
         })
     add_specificity_controls(records, include_uncertain=args.include_uncertain)
+    add_arc_pose_controls(records, include_uncertain=args.include_uncertain)
     add_relative_distance_controls(records)
     report = {
         "summary": aggregate(records, args.reference_source),
