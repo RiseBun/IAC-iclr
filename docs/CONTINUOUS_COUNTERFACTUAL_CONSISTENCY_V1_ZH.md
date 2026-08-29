@@ -148,4 +148,15 @@ PYTHONPATH=src:. python scripts/evaluate_counterfactual_continuous_alignment.py 
 记录组装器会拒绝缺少 `clear/risk`、不匹配 history/model/seed/time axis、非 candidate-blind
 decoder 或含 realized future state 的输入；因此没有完整双分支时，流程会 fail-closed。
 
+正式评测前先运行 readiness audit：
+
+```bash
+PYTHONPATH=src:. python scripts/audit_counterfactual_continuous_records.py \
+  --records results/wam_counterfactual_continuous_records.jsonl \
+  --require-eight-frame-four-second \
+  --output results/wam_counterfactual_readiness.json
+```
+
+只有 `formal_level2_input_ready=true` 才允许运行 CCFC；audit 失败时不输出模型均值。
+
 当前仓库已完成公式、审计门槛和合成对照测试，但服务器上尚未获得正式的 WAM `clear/risk` 原生 action-head 配对。因此当前不能报告 WAM 的真实 CCFC 排名，也不能把 NAVSIM logged future 的结果当作 WAM 因果证据。
