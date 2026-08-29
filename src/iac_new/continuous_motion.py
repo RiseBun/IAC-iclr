@@ -46,6 +46,66 @@ def _wrapped_delta(values: np.ndarray) -> np.ndarray:
     return np.arctan2(np.sin(values), np.cos(values))
 
 
+def _cumulative_arc_length(points_xy: np.ndarray) -> np.ndarray:
+    points = np.asarray(points_xy, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] != 2:
+        raise ValueError("points_xy must have shape [T,2]")
+    if len(points) == 0:
+        return np.empty(0, dtype=np.float64)
+    return np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))])
+
+
+def discrete_frechet_distance(first_xy: np.ndarray, second_xy: np.ndarray) -> float:
+    """Return the discrete Fréchet distance between two ordered 2-D curves."""
+    first = np.asarray(first_xy, dtype=np.float64)
+    second = np.asarray(second_xy, dtype=np.float64)
+    if first.ndim != 2 or second.ndim != 2 or first.shape[1] != 2 or second.shape[1] != 2:
+        raise ValueError("curves must have shape [T,2]")
+    if not len(first) or not len(second):
+        raise ValueError("curves must be non-empty")
+    table = np.full((len(first), len(second)), np.inf, dtype=np.float64)
+    for i in range(len(first)):
+        for j in range(len(second)):
+            distance = float(np.linalg.norm(first[i] - second[j]))
+            if i == 0 and j == 0:
+                table[i, j] = distance
+            elif i == 0:
+                table[i, j] = max(table[i, j - 1], distance)
+            elif j == 0:
+                table[i, j] = max(table[i - 1, j], distance)
+            else:
+                table[i, j] = max(min(table[i - 1, j], table[i - 1, j - 1], table[i, j - 1]), distance)
+    return float(table[-1, -1])
+
+
+def constrained_dtw_distance(first_xy: np.ndarray, second_xy: np.ndarray, *, window: int = 1) -> tuple[float, float]:
+    """Return mean constrained-DTW distance and normalized warp cost.
+
+    A narrow window preserves temporal meaning; unconstrained DTW is unsuitable
+    for causal evaluation because it can align delayed actions away.
+    """
+    first = np.asarray(first_xy, dtype=np.float64)
+    second = np.asarray(second_xy, dtype=np.float64)
+    if first.ndim != 2 or second.ndim != 2 or first.shape[1] != 2 or second.shape[1] != 2:
+        raise ValueError("curves must have shape [T,2]")
+    if not len(first) or not len(second) or int(window) < 0:
+        raise ValueError("curves must be non-empty and window must be non-negative")
+    cost = np.full((len(first) + 1, len(second) + 1), np.inf, dtype=np.float64)
+    steps = np.zeros_like(cost, dtype=np.int32)
+    cost[0, 0] = 0.0
+    for i in range(1, len(first) + 1):
+        low, high = max(1, i - int(window)), min(len(second), i + int(window))
+        for j in range(low, high + 1):
+            distance = float(np.linalg.norm(first[i - 1] - second[j - 1]))
+            predecessor = min((cost[i - 1, j], i - 1, j), (cost[i, j - 1], i, j - 1), (cost[i - 1, j - 1], i - 1, j - 1), key=lambda item: item[0])
+            cost[i, j] = distance + predecessor[0]
+            steps[i, j] = steps[predecessor[1], predecessor[2]] + 1
+    if not np.isfinite(cost[-1, -1]):
+        return float("nan"), float("nan")
+    path_steps = max(int(steps[-1, -1]), 1)
+    return float(cost[-1, -1] / path_steps), float((path_steps - max(len(first), len(second))) / path_steps)
+
+
 def trajectory_to_motion_profile(
     trajectory: Any,
     future_times_s: Any,
@@ -755,8 +815,8 @@ def compare_pose_profiles(
     """Compare the time-indexed planar pose ``[x, y, heading]``."""
     if image_profile.get("source") not in IMAGE_PROFILE_SOURCES:
         raise ValueError("image_profile must be produced independently from action waypoints")
-    if scale_mode not in {"metric", "scale_free", "relative"}:
-        raise ValueError("scale_mode must be metric, scale_free, or relative")
+    if scale_mode not in {"metric", "scale_free", "relative", "arc_relative"}:
+        raise ValueError("scale_mode must be metric, scale_free, relative, or arc_relative")
     predicted_rows = list(image_profile.get("rows") or [])
     action_rows = list(action_profile.get("rows") or [])
     if not predicted_rows or len(predicted_rows) != len(action_rows):
@@ -766,10 +826,13 @@ def compare_pose_profiles(
     if not np.all(np.isfinite(predicted)) or not np.all(np.isfinite(action)):
         raise ValueError("pose values must be finite")
     scale_ratio = None
-    if scale_mode in {"scale_free", "relative"}:
+    if scale_mode in {"scale_free", "relative", "arc_relative"}:
         if scale_mode == "relative":
             predicted_scale = float(abs(predicted[-1, 0]))
             action_scale = float(abs(action[-1, 0]))
+        elif scale_mode == "arc_relative":
+            predicted_scale = float(_cumulative_arc_length(predicted[:, :2])[-1])
+            action_scale = float(_cumulative_arc_length(action[:, :2])[-1])
         else:
             predicted_scale = float(np.max(np.linalg.norm(predicted[:, :2], axis=1)))
             action_scale = float(np.max(np.linalg.norm(action[:, :2], axis=1)))
@@ -782,7 +845,7 @@ def compare_pose_profiles(
                 "evaluable_intervals": 0,
                 "total_intervals": len(predicted_rows),
                 "reason": "translation_amplitude_too_small_for_relative_pose",
-                "metrics": {"se2_pose": {"translation_mae": None, "forward_mae": None, "lateral_mae": None, "heading_mae_rad": None, "endpoint_translation_error": None, "endpoint_heading_error_rad": None, "path_cosine": None, "count": 0}},
+                "metrics": {"se2_pose": {"translation_mae": None, "forward_mae": None, "lateral_mae": None, "heading_mae_rad": None, "endpoint_translation_error": None, "endpoint_heading_error_rad": None, "path_cosine": None, "frechet_distance": None, "constrained_dtw_distance": None, "dtw_warp_ratio": None, "count": 0}},
             }
         scale_ratio = predicted_scale / action_scale
         predicted[:, :2] /= predicted_scale
@@ -798,7 +861,7 @@ def compare_pose_profiles(
             "evaluable_intervals": 0,
             "total_intervals": len(predicted_rows),
             "independent_translation_scale_ratio": scale_ratio,
-            "metrics": {"se2_pose": {"translation_mae": None, "forward_mae": None, "lateral_mae": None, "heading_mae_rad": None, "endpoint_translation_error": None, "endpoint_heading_error_rad": None, "path_cosine": None, "count": 0}},
+            "metrics": {"se2_pose": {"translation_mae": None, "forward_mae": None, "lateral_mae": None, "heading_mae_rad": None, "endpoint_translation_error": None, "endpoint_heading_error_rad": None, "path_cosine": None, "frechet_distance": None, "constrained_dtw_distance": None, "dtw_warp_ratio": None, "count": 0}},
         }
     translation_error = np.linalg.norm(predicted[valid, :2] - action[valid, :2], axis=1)
     forward_error = np.abs(predicted[valid, 0] - action[valid, 0])
@@ -808,6 +871,8 @@ def compare_pose_profiles(
     action_xy = action[valid, :2].reshape(-1)
     xy_norms = np.linalg.norm(predicted_xy) * np.linalg.norm(action_xy)
     cosine = float(np.dot(predicted_xy, action_xy) / xy_norms) if xy_norms > 1e-9 else None
+    frechet = discrete_frechet_distance(predicted[valid, :2], action[valid, :2])
+    dtw_distance, dtw_warp_ratio = constrained_dtw_distance(predicted[valid, :2], action[valid, :2], window=1)
     last = valid[-1]
     metric = {
         "translation_mae": float(np.mean(translation_error)),
@@ -817,6 +882,9 @@ def compare_pose_profiles(
         "endpoint_translation_error": float(np.linalg.norm(predicted[last, :2] - action[last, :2])) if last == len(predicted) - 1 else None,
         "endpoint_heading_error_rad": float(abs(_wrapped_delta(predicted[last, 2] - action[last, 2]))) if last == len(predicted) - 1 else None,
         "path_cosine": cosine,
+        "frechet_distance": frechet,
+        "constrained_dtw_distance": dtw_distance,
+        "dtw_warp_ratio": dtw_warp_ratio,
         "count": len(valid),
     }
     return {

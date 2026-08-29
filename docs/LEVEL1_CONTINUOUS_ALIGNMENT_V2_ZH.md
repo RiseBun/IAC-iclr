@@ -56,6 +56,25 @@ P_A(t) = [x_A(t), y_A(t), heading_A(t)]
 这组 `SE(2)` 指标在尺度可靠时使用米制；正式主比较使用 `relative` 平移归一化，
 heading 保持弧度单位。它比单独的 speed MAE 更接近“轨迹与图像是否一致”的原始问题。
 
+### 2.1 归一化与曲线距离消融
+
+在现有 4 帧结果上，额外比较了终点前向位移归一（`x_end`）与整条二维轨迹弧长归一（`arc`），
+并加入离散 Fréchet 与时间窗为 1 的受限 DTW 作为有序曲线诊断。25 个非重叠样本的均值如下：
+
+| 变体 | 逐点 pose MAE | Fréchet | 受限 DTW |
+|---|---:|---:|---:|
+| `x_end` | 0.120 | 0.440 | 0.295 |
+| `arc` | 0.151 | 0.505 | 0.347 |
+
+`x_end` 在当前数据上更稳定，也更直接表达“前向进展比例”，因此继续作为 Level-1 主归一化。
+`arc` 保留为急转弯/大曲率样本的公平性诊断，不替换主指标。Fréchet 和受限 DTW 均保留时间顺序：
+将图像序列反转后，25 个样本的均值分别升至 Fréchet 0.968/1.230、DTW 0.668/0.820
+（对应 `x_end`/`arc`），说明它们能捕捉曲线形状与时序错位；但 DTW 不得使用无约束窗口，且两者都不替代
+逐点 MAE、heading/yaw 和 curvature 门槛。
+
+可复现实验脚本为 `scripts/compare_pose_distance_variants.py`，输出协议
+`pose-distance-variant-ablation-v1`。速度/绝对纵向进度仍是 shadow-only，不进入正式 Level-1 总分。
+
 ## 3. 三个必要证据
 
 ### 3.1 Continuous Alignment

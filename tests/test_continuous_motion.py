@@ -134,6 +134,18 @@ class ContinuousMotionTest(unittest.TestCase):
         assert relative["metrics"]["se2_pose"]["path_cosine"] > 0.99
         assert shape["leakage_audit"]["action_used_for_image_scale"] is False
 
+    def test_arc_relative_and_ordered_curve_diagnostics(self) -> None:
+        times = [0.5, 1.0, 1.5, 2.0]
+        value = decoder([4.0] * 4, curvature=0.08)
+        imagined = image_motion_profile(value, times, initial_speed_mps=4.0)
+        action = trajectory_to_motion_profile(value["trajectory"], times, initial_speed_mps=4.0)
+        result = compare_pose_profiles(imagined, action, scale_mode="arc_relative")
+        metrics = result["metrics"]["se2_pose"]
+        assert result["status"] == "ok"
+        assert metrics["frechet_distance"] >= 0.0
+        assert metrics["constrained_dtw_distance"] >= 0.0
+        assert 0.0 <= metrics["dtw_warp_ratio"] <= 1.0
+
     def test_pose_posterior_reports_component_and_joint_coverage(self) -> None:
         times = [0.5, 1.0, 1.5, 2.0]
         value = decoder([4.0] * 4)
