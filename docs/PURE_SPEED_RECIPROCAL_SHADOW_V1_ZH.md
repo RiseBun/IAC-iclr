@@ -39,6 +39,14 @@ python scripts/evaluate_pure_speed_reciprocal.py \
 
 在服务器上用 NAVSIM Level-1 的 78 个 8 帧、4 秒样本，NeuFlow v2 `neuflow_mixed.pth` 提取相邻帧对应，UniDepth v2 ViT-L 提供米制深度；随后在道路下半区用 `solvePnPRansac` 从 3D-2D 对应估计自车前向位移。没有把 action waypoint 输入该分支。
 
-结果：平均进度 MAE `0.327 m`，中位数 `0.252 m`，P90 `0.689 m`，区间符号准确率 `93.59%`。history-only（末帧速度乘 0.5 秒）MAE 为 `0.472 m`，平均误差下降 `30.8%`，但逐样本胜出为 `38/78`。因此该分支可以作为 Level-1 的 shadow residual / 辅助证据；它尚未通过 reciprocal identity/order 控制，也未取得正式因果指标资格。
+结果和前端拆分如下：
+
+| 前端 | 平均进度 MAE | 中位数 | P90 | 相对 history-only | 逐样本胜出 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| RAFT-Large + UniDepth-L + PnP | `0.347 m` | `0.270 m` | `0.785 m` | `-26.5%` | `40/78` |
+| NeuFlow v2 + UniDepth-L + PnP | `0.327 m` | `0.252 m` | `0.689 m` | `-30.8%` | `38/78` |
+| history-only | `0.472 m` | - | - | - | - |
+
+两种前端的区间符号准确率均为 `93.59%`。因此主要增益来自 UniDepth-L 的米制深度和 PnP 相机几何，而不是 NeuFlow 本身；NeuFlow 相对 RAFT 的平均改善只有 `0.020 m`，且逐样本胜出更少。当前推荐保留 RAFT 作为 lateral/yaw/turn-shape 前端，仅把 UniDepth-L + PnP 吸收到纵向尺度分支。该分支可以作为 Level-1 的 shadow residual / 辅助证据；它尚未通过 reciprocal identity/order 控制，也未取得正式因果指标资格。
 
 运行脚本为 `scripts/run_neuflow_unidepth_probe.py`。该试验还暴露出一个重要实现边界：仅用竖直光流乘深度的简化公式 MAE 为 `2.080 m`，加入相机外参和 PnP 后才降至 `0.327 m`，说明几何约束是必要条件。

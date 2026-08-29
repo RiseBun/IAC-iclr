@@ -17,9 +17,17 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def _load_neuflow(root: Path, checkpoint: Path, device: str):
+def _load_flow(backend: str, root: Path | None, checkpoint: Path | None, device: str):
     import torch
 
+    if backend == "raft_large":
+        from torchvision.models.optical_flow import Raft_Large_Weights, raft_large
+
+        return raft_large(weights=Raft_Large_Weights.DEFAULT, progress=False).to(device).eval(), torch
+    if backend != "neuflow":
+        raise ValueError("flow backend must be neuflow or raft_large")
+    if root is None or checkpoint is None:
+        raise ValueError("neuflow-root and neuflow-checkpoint are required for NeuFlow")
     sys.path.insert(0, str(root))
     from NeuFlow.backbone_v7 import ConvBlock
     from NeuFlow.neuflow import NeuFlow
@@ -109,7 +117,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     from unidepth.utils.camera import Pinhole
 
     rows = _read_jsonl(args.manifest)[: args.limit]
-    flow_model, flow_torch = _load_neuflow(args.neuflow_root, args.neuflow_checkpoint, args.device)
+    flow_model, flow_torch = _load_flow(args.flow_backend, args.neuflow_root, args.neuflow_checkpoint, args.device)
     depth_model, depth_torch = _load_depth(args.depth_model, args.device)
     estimates: list[dict[str, Any]] = []
     for index, row in enumerate(rows):
@@ -125,11 +133,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         methods: list[str] = []
         for first, second in zip(paths[:-1], paths[1:]):
             bgr0, rgb0 = _image(first, width=768, height=432)
-            bgr1, _ = _image(second, width=768, height=432)
-            flow0 = flow_torch.from_numpy(bgr0).permute(2, 0, 1).unsqueeze(0).to(args.device).half()
-            flow1 = flow_torch.from_numpy(bgr1).permute(2, 0, 1).unsqueeze(0).to(args.device).half()
+            bgr1, rgb1 = _image(second, width=768, height=432)
+            if args.flow_backend == "neuflow":
+                flow0 = flow_torch.from_numpy(bgr0).permute(2, 0, 1).unsqueeze(0).to(args.device).half()
+                flow1 = flow_torch.from_numpy(bgr1).permute(2, 0, 1).unsqueeze(0).to(args.device).half()
+                flow_args = (flow0, flow1)
+            else:
+                flow0 = flow_torch.from_numpy(rgb0).permute(2, 0, 1).unsqueeze(0).to(args.device).float()
+                flow1 = flow_torch.from_numpy(rgb1).permute(2, 0, 1).unsqueeze(0).to(args.device).float()
+                flow_args = (flow0.div(127.5).sub(1.0), flow1.div(127.5).sub(1.0))
             with flow_torch.inference_mode():
-                flow = flow_model(flow0, flow1)[-1][0].float().permute(1, 2, 0).cpu().numpy()
+                flow = flow_model(*flow_args, num_flow_updates=32)[-1][0].float().permute(1, 2, 0).cpu().numpy() if args.flow_backend == "raft_large" else flow_model(*flow_args)[-1][0].float().permute(1, 2, 0).cpu().numpy()
                 depth_pred = depth_model.infer(
                     depth_torch.from_numpy(rgb0).permute(2, 0, 1), camera
                 )["depth"].squeeze().float().cpu().numpy()
@@ -169,6 +183,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "protocol": "navsim-neuflow-unidepth-l-forward-progress-probe-v1",
         "manifest": str(args.manifest.resolve()),
         "depth_model": args.depth_model,
+        "flow_backend": args.flow_backend,
         "flow_checkpoint": str(args.neuflow_checkpoint),
         "num_requested": len(rows),
         "num_evaluable": len(estimates),
@@ -190,8 +205,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--neuflow-root", type=Path, required=True)
-    parser.add_argument("--neuflow-checkpoint", type=Path, required=True)
+    parser.add_argument("--flow-backend", choices=("neuflow", "raft_large"), default="neuflow")
+    parser.add_argument("--neuflow-root", type=Path)
+    parser.add_argument("--neuflow-checkpoint", type=Path)
     parser.add_argument("--depth-model", default="lpiccinelli/unidepth-v2-vitl14")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--limit", type=int, default=4)
