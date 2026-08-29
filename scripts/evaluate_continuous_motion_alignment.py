@@ -772,6 +772,7 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
         ("metric", "pose_alignment_metric"),
         ("scale_free", "pose_alignment_scale_free"),
         ("relative", "pose_alignment_relative"),
+        ("arc_relative", "pose_alignment_arc_relative"),
     ):
         pose_records = [
             record.get(record_key, {}) for record in records
@@ -794,6 +795,8 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
                 "m/rad" if mode == "metric"
                 else "normalized_terminal_forward/rad"
                 if mode == "relative"
+                else "normalized_arc_length/rad"
+                if mode == "arc_relative"
                 else "normalized_translation/rad"
             ),
         }
@@ -884,7 +887,7 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
         "forward_distance_alignment": distance_summary,
         "se2_pose_alignment": pose_summary,
         "primary_distance_alignment": "relative_observable",
-        "primary_pose_alignment": "relative",
+        "primary_pose_alignment": "arc_relative",
         "se2_pose_posterior": {
             "samples": len(pose_posterior_records),
             "nominal_coverage": 0.90,
@@ -1054,6 +1057,9 @@ def main() -> None:
         pose_alignment_relative = compare_pose_profiles(
             imagined, reference, scale_mode="relative", include_uncertain=args.include_uncertain
         )
+        pose_alignment_arc_relative = compare_pose_profiles(
+            imagined, reference, scale_mode="arc_relative", include_uncertain=args.include_uncertain
+        )
         pose_image_profile = (
             apply_pose_interval_calibration(raw_imagined, pose_calibration)
             if pose_calibration is not None
@@ -1118,6 +1124,7 @@ def main() -> None:
             "pose_alignment_metric": pose_alignment_metric,
             "pose_alignment_scale_free": pose_alignment_scale_free,
             "pose_alignment_relative": pose_alignment_relative,
+            "pose_alignment_arc_relative": pose_alignment_arc_relative,
             "pose_posterior": pose_posterior,
             "raw_image_comparison": raw_comparison,
             "longitudinal_behavior": longitudinal_behavior,
