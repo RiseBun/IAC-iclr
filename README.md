@@ -318,6 +318,8 @@ The frozen default recovered lateral events on the balanced NAVSIM set with:
 These numbers validate the image-to-event measurement component. They are not
 the final joint WAM score. Existing Epona and DriveWAM reports are diagnostic
 because their records predate the complete seed/history/planner-rerun contract.
+The prior closed-loop intervention and its evidence boundary are reconciled in
+[Closed-loop Evidence Reconciliation](docs/CLOSED_LOOP_EVIDENCE_RECONCILIATION_20260829_ZH.md).
 
 See [the metric specification](docs/EVENT_CAUSAL_METRICS_V1.md), [method
 provenance](docs/BEST_METHOD_PROVENANCE.md), and [snapshot
