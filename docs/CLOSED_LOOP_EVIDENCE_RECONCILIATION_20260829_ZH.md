@@ -100,10 +100,13 @@ manifest 与 motion-probe scores，并使用当前评分器复算：
 /mnt/slurmfs-4090node1/homes/zchen897/work_dirs/closed_loop_recovered_20260829/navsim_cache_aligned_rollout_realized.jsonl
 ```
 
-全量 staging 为 `78 × 3 = 234` 个分支；当前服务器 mini cache 对该 log 只有 9 个精确命中 source，
-故 cache-aligned 子集为 9 twins / 27 branches。27/27 rollout 成功导出独立
-`realized_future_ego_state`，PDM `task_success` 为 `22/27 = 0.8148`。
-其余 69 个 source 没有对应 cache，已保留为待补 cache 的 staging，不计入任何正式指标。
+全量 staging 为 `78 × 3 = 234` 个分支。使用 native `sample_prev` 作为执行缓存锚点可得到 9 twins / 27 branches，
+但该 scaffold 与图像锚点相差一个 native frame，只能用于验证执行链，不能直接作为正式 WAM FCS 样本。
+在严格要求图像 anchor token 与 metric-cache token 相等的正式输入池中，当前 78 条样本只有 5 twins / 15 branches。
+这 15 条 rollout 全部成功导出独立
+`realized_future_ego_state`，PDM `task_success` 为 `14/15 = 0.9333`。
+此前 9-twin scaffold 的执行检查结果为 `22/27 = 0.8148`，仅作为接口诊断。
+9-twin scaffold 的其余分支以及严格池之外的样本均已保留为待补 cache 的 staging，不计入任何正式指标。
 
 该结果只证明独立执行链已经可运行，不是 WAM 的 FCS：当前 staging 的未来图像仍为
 `wam_generated_pending`，动作条件也不是 WAM native action-head。接入 WAM 后必须按 `branch_id`
