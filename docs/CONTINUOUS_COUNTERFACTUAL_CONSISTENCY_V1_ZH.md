@@ -130,4 +130,22 @@ PYTHONPATH=src:. python scripts/evaluate_counterfactual_continuous_alignment.py 
 和 `continuous_cfc.arc_relative.score` 是形状诊断；顶层 `summary.metric_score_mean` 只对
 通过 readiness audit 的配对求均值。
 
+当 WAM backend 完成生成后，先用 `scripts/build_wam_level1_continuous_manifest.py` 保留
+8 帧图像、原生 action-head 和双分支 lineage，再运行候选盲 Level-1 decoder。随后使用：
+
+```bash
+PYTHONPATH=src:. python scripts/build_counterfactual_continuous_records.py \
+  --manifest results/wam_level1_manifest.jsonl \
+  --scores results/wam_level1_scores.jsonl \
+  --output results/wam_counterfactual_continuous_records.jsonl
+
+PYTHONPATH=src:. python scripts/evaluate_counterfactual_continuous_alignment.py \
+  --records results/wam_counterfactual_continuous_records.jsonl \
+  --require-eight-frame-four-second --require-ready \
+  --output results/wam_ccfc_report.json
+```
+
+记录组装器会拒绝缺少 `clear/risk`、不匹配 history/model/seed/time axis、非 candidate-blind
+decoder 或含 realized future state 的输入；因此没有完整双分支时，流程会 fail-closed。
+
 当前仓库已完成公式、审计门槛和合成对照测试，但服务器上尚未获得正式的 WAM `clear/risk` 原生 action-head 配对。因此当前不能报告 WAM 的真实 CCFC 排名，也不能把 NAVSIM logged future 的结果当作 WAM 因果证据。

@@ -127,6 +127,11 @@ def build_manifest(
             "action_trajectory_source": "wam_action_head",
             "metadata": metadata,
         })
+        # Preserve the paired-counterfactual lineage needed by Level-2. These
+        # fields are metadata only and are never exposed to the image decoder.
+        for field in ("counterfactual_group_id", "branch_role", "history_fingerprint", "nuisance_seed"):
+            if field in generated:
+                row[field] = generated[field]
         row.pop("realized_future_ego_state", None)
         output.append(row)
     return output

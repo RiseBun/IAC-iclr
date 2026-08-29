@@ -18,6 +18,10 @@ def _base():
 def _generated():
     return [{
         "branch_id": "source-1::branch=logged",
+        "counterfactual_group_id": "group-1",
+        "branch_role": "clear",
+        "history_fingerprint": "history-1",
+        "nuisance_seed": 7,
         "source_key": "source-1",
         "wam_model_id": "test-wam",
         "future_images": [f"g{i}.png" for i in range(8)],
@@ -37,6 +41,10 @@ def test_builds_generated_level1_row_without_realized_future_state():
     assert row["metadata"]["action_waypoint_used_by_image_branch"] is False
     assert row["action_trajectory_source"] == "wam_action_head"
     assert np.asarray(row["action_trajectory"]).shape == (8, 3)
+    assert row["counterfactual_group_id"] == "group-1"
+    assert row["branch_role"] == "clear"
+    assert row["history_fingerprint"] == "history-1"
+    assert row["nuisance_seed"] == 7
     audit = _level1_input_audit(row, "action")
     assert audit["ready"] is True
 
