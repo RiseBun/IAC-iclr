@@ -31,11 +31,35 @@ class WAMCapability:
     control_path: str = "unknown"
 
     @property
+    def evaluation_tier(self) -> str:
+        """Return the strongest claim this repository can support.
+
+        The tier is deliberately capability-based.  A checkpoint can be a
+        strong video model and still be ineligible for causal scoring when it
+        has no independently exposed action head or no external control path.
+        """
+        if self.future_image_inference and self.external_trajectory_control and self.action_prediction:
+            return "native_action_conditioned"
+        if self.future_image_inference and self.external_trajectory_control:
+            return "externally_controlled_video"
+        if self.future_image_inference:
+            return "video_only"
+        if self.action_prediction:
+            return "action_only"
+        return "unsupported"
+
+    @property
+    def formal_level2_eligible(self) -> bool:
+        return self.evaluation_tier == "native_action_conditioned"
+
+    @property
     def suitable_for_counterfactual_image_cc(self) -> bool:
         return self.future_image_inference and self.external_trajectory_control
 
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
+        result["evaluation_tier"] = self.evaluation_tier
+        result["formal_level2_eligible"] = self.formal_level2_eligible
         result["suitable_for_counterfactual_image_cc"] = self.suitable_for_counterfactual_image_cc
         return result
 

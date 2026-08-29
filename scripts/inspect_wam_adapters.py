@@ -16,12 +16,14 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     rows = [row.to_dict() for row in inspect_known_wams(args.home)]
+    by_tier = {}
+    for row in rows:
+        by_tier.setdefault(row["evaluation_tier"], []).append(row["model_id"])
     payload = {
         "protocol": "iac-wam-capability-audit-v1",
-        "primary_candidate": "drivewam_navsim",
-        "secondary_candidates": ["epona_nuplan", "worlddrive_tadwm"],
-        "legacy_control": "drivingworld",
-        "runtime_pending": ["drivewam_navsim", "epona_nuplan"],
+        "selection_policy": "capability_tier_then_runtime_status",
+        "formal_level2_candidates": [row["model_id"] for row in rows if row["formal_level2_eligible"]],
+        "by_evaluation_tier": by_tier,
         "rows": rows,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -15,6 +15,10 @@ class WamAdapterTest(unittest.TestCase):
             "x", "x", "/tmp/x", True, True, True, "x", "x", "x", "x", "x", "x"
         )
         self.assertTrue(controlled.suitable_for_counterfactual_image_cc)
+        self.assertEqual(controlled.evaluation_tier, "native_action_conditioned")
+        self.assertTrue(controlled.formal_level2_eligible)
+        self.assertEqual(base.evaluation_tier, "video_only")
+        self.assertFalse(base.formal_level2_eligible)
 
     def test_drivewam_is_primary_but_waits_for_base(self):
         with TemporaryDirectory() as directory:

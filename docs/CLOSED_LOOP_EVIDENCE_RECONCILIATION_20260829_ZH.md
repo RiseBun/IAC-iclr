@@ -58,6 +58,26 @@ DriveWAM 旧诊断的关键数值：
 - `formal_level2_ccfc_ready: false`；
 - `formal_level3_fcs_ready: false`。
 
+## WAM 无关的能力分层
+
+DriveWAM 不是默认标准模型。它的价值是提供一个有公开 action-conditioning 接口的候选；如果
+action-to-image 响应弱，结果应被解释为模型响应门未通过，而不是 IAC 测量器失败。
+
+当前 adapter 按能力而不是按模型名称决定可报告范围：
+
+| 能力层 | 必要能力 | 可报告内容 |
+|---|---|---|
+| `native_action_conditioned` | 生成未来图像 + 外部轨迹控制 + 独立 native action head | Level-1、Level-2 CCFC、Level-3 FCS（仍需独立 rollout） |
+| `externally_controlled_video` | 生成未来图像 + 外部轨迹控制，但无 native action head | 受限 counterfactual image response；不能宣称 WAM native 因果 |
+| `video_only` | 只能生成未来图像 | Level-1 图像测量/质量对照 |
+| `action_only` | 只能输出动作 | 动作侧规划诊断；不能计算图像-动作 CCFC |
+
+实现位于 `src/iac_new/wam_adapters.py`，审计入口
+`scripts/inspect_wam_adapters.py` 输出 `evaluation_tier` 和 `formal_level2_eligible`。
+因此同一个 IAC scorer 可以覆盖大多数 WAM：每个模型只需提供统一的
+`history + condition -> future_images + native_action_head + lineage` adapter；缺失字段会
+触发 fail-closed，而不是用候选轨迹或文字事件补齐。
+
 ## 最小复用/补跑路径
 
 1. 保留旧 DriveWAM 报告作为 `diagnostic_only` 基线，不把它混入正式排行榜。
