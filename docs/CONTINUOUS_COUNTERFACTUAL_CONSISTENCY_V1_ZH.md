@@ -89,6 +89,13 @@ CCFC = (direction × magnitude × temporal)^(1/3)
 
 分别按每个分支的最大响应幅度归一化，只衡量方向和时间形状，不用于替代米制结果。它可诊断单目尺度误差是否掩盖了正确的反事实响应。
 
+### `arc_relative`（长时域形状诊断）
+
+8 帧/4 秒协议额外提供 `arc_relative`：clear/risk 的图像与 action pose 各自按二维
+轨迹弧长归一，再比较风险干预引起的响应。它与 Level-1 的长时域主归一保持一致，
+可避免终点前向位移接近零时的病态分母；但它会弱化反事实响应的绝对幅度，因此只作为
+敏感性诊断，不能替代正式米制 CCFC。
+
 ## 5. 与其他指标的关系
 
 | 层级 | 指标 | 能证明什么 | 不能证明什么 |
@@ -119,6 +126,8 @@ PYTHONPATH=src:. python scripts/evaluate_counterfactual_continuous_alignment.py 
   --output counterfactual_continuous_report.json
 ```
 
-输出中的 `continuous_cfc.metric.score` 是正式米制 CCFC，`continuous_cfc.scale_free.score` 是形状诊断；顶层 `summary.metric_score_mean` 只对通过 readiness audit 的配对求均值。
+输出中的 `continuous_cfc.metric.score` 是正式米制 CCFC，`continuous_cfc.scale_free.score`
+和 `continuous_cfc.arc_relative.score` 是形状诊断；顶层 `summary.metric_score_mean` 只对
+通过 readiness audit 的配对求均值。
 
 当前仓库已完成公式、审计门槛和合成对照测试，但服务器上尚未获得正式的 WAM `clear/risk` 原生 action-head 配对。因此当前不能报告 WAM 的真实 CCFC 排名，也不能把 NAVSIM logged future 的结果当作 WAM 因果证据。

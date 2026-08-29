@@ -105,6 +105,9 @@ def main() -> None:
                 "scale_free": compare_counterfactual_se2_consistency(
                     image_clear, image_risk, action_clear, action_risk, scale_mode="scale_free"
                 ),
+                "arc_relative": compare_counterfactual_se2_consistency(
+                    image_clear, image_risk, action_clear, action_risk, scale_mode="arc_relative"
+                ),
             },
         })
     eligible = [row for row in reports if row["causal_claim_eligible"]]
@@ -118,6 +121,11 @@ def main() -> None:
         for row in eligible
         if row["continuous_cfc"]["scale_free"].get("score") is not None
     ]
+    arc_relative_scores = [
+        row["continuous_cfc"]["arc_relative"]["score"]
+        for row in eligible
+        if row["continuous_cfc"]["arc_relative"].get("score") is not None
+    ]
     output = {
         "protocol": "counterfactual-continuous-alignment-report-v2",
         "primary_metric": "continuous-counterfactual-foresight-consistency-v1",
@@ -129,6 +137,8 @@ def main() -> None:
             "scale_free_score_mean": None if not scale_free_scores else float(np.mean(scale_free_scores)),
             "metric_score_count": len(metric_scores),
             "scale_free_score_count": len(scale_free_scores),
+            "arc_relative_score_mean": None if not arc_relative_scores else float(np.mean(arc_relative_scores)),
+            "arc_relative_score_count": len(arc_relative_scores),
         },
         "reports": reports,
     }

@@ -351,6 +351,11 @@ class ContinuousMotionTest(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertAlmostEqual(result["score"], 1.0, places=6)
         self.assertAlmostEqual(result["subscores"]["response_direction"], 1.0, places=6)
+        shape_result = compare_counterfactual_se2_consistency(
+            clear_image, risk_image, clear_action, risk_action, scale_mode="arc_relative"
+        )
+        self.assertEqual(shape_result["status"], "ok")
+        self.assertGreater(shape_result["score"], 0.99)
 
     def test_continuous_cfc_penalizes_opposite_counterfactual_response(self) -> None:
         times = [0.5, 1.0, 1.5, 2.0]

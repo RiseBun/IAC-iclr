@@ -1310,8 +1310,8 @@ def compare_counterfactual_se2_consistency(
     times.  ``scale_free`` is a shape-only diagnostic; ``metric`` is the
     primary report because it retains metre/radian response magnitude.
     """
-    if scale_mode not in {"metric", "scale_free"}:
-        raise ValueError("scale_mode must be metric or scale_free")
+    if scale_mode not in {"metric", "scale_free", "arc_relative"}:
+        raise ValueError("scale_mode must be metric, scale_free, or arc_relative")
     if any(
         not np.isfinite(value) or value < 0.0
         for value in (
@@ -1347,15 +1347,32 @@ def compare_counterfactual_se2_consistency(
     image_risk = pose(risk_image)
     action_clear = pose(clear_action)
     action_risk = pose(risk_action)
+    raw_action_clear = action_clear.copy()
+    raw_action_risk = action_risk.copy()
     if not all(np.all(np.isfinite(value)) for value in (image_clear, image_risk, action_clear, action_risk)):
         raise ValueError("counterfactual pose values must be finite")
+    arc_scales = None
+    if scale_mode == "arc_relative":
+        arc_scales = []
+        for trajectory in (image_clear, image_risk, action_clear, action_risk):
+            arc = float(_cumulative_arc_length(trajectory[:, :2])[-1])
+            if arc < 1e-9:
+                return {
+                    "protocol": "continuous-counterfactual-foresight-consistency-v1",
+                    "scale_mode": scale_mode,
+                    "status": "abstain",
+                    "reason": "trajectory_arc_length_too_small",
+                    "coverage": 0.0,
+                    "evaluable_intervals": 0,
+                    "total_intervals": total,
+                    "score": None,
+                }
+            arc_scales.append(arc)
+            trajectory[:, :2] /= arc
     image_response = image_risk - image_clear
     image_response[:, 2] = _wrapped_delta(image_response[:, 2])
     action_response = action_risk - action_clear
     action_response[:, 2] = _wrapped_delta(action_response[:, 2])
-    raw_action_translation_norm = np.linalg.norm(action_response[:, :2], axis=1)
-    raw_action_heading_abs = np.abs(action_response[:, 2])
-
     translation_scale = 1.0
     image_heading_scale = 1.0
     action_heading_scale = 1.0
@@ -1383,6 +1400,10 @@ def compare_counterfactual_se2_consistency(
         image_response[:, 2] /= image_heading_scale
         action_response[:, 2] /= action_heading_scale
 
+    raw_action_response = raw_action_risk - raw_action_clear
+    raw_action_response[:, 2] = _wrapped_delta(raw_action_response[:, 2])
+    raw_action_translation_norm = np.linalg.norm(raw_action_response[:, :2], axis=1)
+    raw_action_heading_abs = np.abs(raw_action_response[:, 2])
     active = (raw_action_translation_norm >= minimum_translation_delta_m) | (
         raw_action_heading_abs >= minimum_heading_delta_rad
     )
@@ -1509,6 +1530,12 @@ def compare_counterfactual_se2_consistency(
         },
         "normalization": {
             "translation_scale": float(translation_scale),
+            "arc_scales": None if arc_scales is None else {
+                "image_clear": float(arc_scales[0]),
+                "image_risk": float(arc_scales[1]),
+                "action_clear": float(arc_scales[2]),
+                "action_risk": float(arc_scales[3]),
+            },
             "image_heading_scale": float(image_heading_scale),
             "action_heading_scale": float(action_heading_scale),
             "translation_tolerance_m": float(translation_tolerance_m),
