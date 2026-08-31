@@ -88,7 +88,7 @@ def inspect_known_wams(home: Path) -> list[WAMCapability]:
             repository_path=str(home / "DriveWAM"),
             future_image_inference=True,
             external_trajectory_control=True,
-            action_prediction=True,
+            action_prediction=False,
             native_dataset="NavSim / PhysicalAI-AV",
             native_history="4 frames in NavSim config",
             native_future="4 future image indices in NavSim config",
@@ -109,7 +109,7 @@ def inspect_known_wams(home: Path) -> list[WAMCapability]:
             native_future="variable autoregressive rollout",
             checkpoint_source="Hugging Face Kevin-thu/Epona",
             status="runtime_verified_native_grid_pending",
-            reason="The server smoke test generated logged/left/right branches and a 20-frame, 4-second rollout with verified pose/yaw injection. Its native grid is 5 Hz (0.2 s), so canonical 0.5-second scoring still requires an explicit, audited resampling adapter.",
+            reason="The server smoke test generated logged/left/right branches and a 20-frame, 4-second rollout with verified pose/yaw injection. The checked path exposes external pose/yaw control but no independent native action head; its native grid is 5 Hz (0.2 s), so it is restricted to controlled-video diagnostics until both gaps are resolved.",
         ),
         WAMCapability(
             model_id="worlddrive_tadwm",

@@ -104,6 +104,7 @@ history + future front-camera frames
 
 - 历史 generated compatibility `0.3279`，control compatibility `0.6352`。
 - 有控制入口。服务器已完成模型和 VAE 的单样本 runtime smoke：logged/left/right 分支均成功生成；8-step 与 20-step 均可运行，20-step 输出为 3×20 张未来图像并覆盖原生 `0.2…4.0 s`，`action_injection_verified=true`。
+- 当前验证路径只暴露外部 pose/yaw 控制，没有独立的 Epona native action head，因此按能力分层归入 `externally_controlled_video`，不能直接计入正式 CCFC；它可用于受限的 action→image 响应诊断。
 - 当前 Epona nuPlan 配置的原生时间栅格是 5 Hz（`0.2, 0.4, ...`）。因此它已经具备真实 4 秒生成能力，但还没有直接对齐固定协议的 `0.5, 1.0, ..., 4.0 s` 采样点。
 - 要进入正式池，必须保留原生时间戳，并通过经过审计的时间重采样/连续运动解码映射到统一评分轴；禁止把 5 Hz 帧直接重命名成 0.5 秒帧。
 
@@ -132,7 +133,8 @@ history + future front-camera frames
 服务器审计当前给出：
 
 ```text
-native_action_conditioned: drivewam_navsim, epona_nuplan, worlddrive_tadwm
+native_action_conditioned: drivewam_navsim, worlddrive_tadwm
+externally_controlled_video: epona_nuplan
 video_only: drivingworld
 action_only: simwam
 ```

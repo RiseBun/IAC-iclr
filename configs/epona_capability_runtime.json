@@ -1,6 +1,6 @@
 {
   "model_id": "epona_nuplan",
-  "native_action_head": true,
+  "native_action_head": false,
   "external_trajectory_control": true,
   "time_alignment": "continuous_resample",
   "independent_rollout": false,
