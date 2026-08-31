@@ -1,8 +1,8 @@
 # IAC 项目总状态与下一步计划
 
-更新时间：2026-08-31  
+更新时间：2026-09-01
 仓库：`RiseBun/IAC-iclr`  
-当前最新提交：`0085da7`
+当前最新提交：`425f1be`
 
 ## 一句话结论
 
@@ -22,7 +22,7 @@ independent closed-loop realization
 CCFC / FCS
 ```
 
-当前最可靠的是 Level-1 图像侧横向/转向测量；Level-2/3 正式 WAM 因果指标尚未完成，因为还没有一个 WAM 在同一批样本上同时提供合格的未来图像、native action head 和独立 rollout。
+当前最可靠的是 Level-1 图像侧横向/转向测量。WorldDrive 已首次跑通 `native action head → action-conditioned future → candidate-blind Level-1`，并通过错身份和时间倒序控制；但样本只有 5 个，且尚无同场景 clear/risk 双原生动作，因此仍是强 pilot，不是正式 Level-2 CCFC。Level-3 仍缺独立 rollout。
 
 ## 1. 原始问题
 
@@ -114,9 +114,20 @@ history + future front-camera frames
 - 历史 intervention 显示 action-to-image 响应很弱，不能预先假设它是权威模型。
 - 服务器已有 NAVSIM checkpoint，但 Wan2.2 基座不完整，仍缺 VAE、tokenizer、text encoder 等组件，并缺少 `easydict` / `flash_attn` 运行依赖。
 
-### WorldDrive / SimWAM
+### WorldDrive
 
-- WorldDrive checkpoint 与代码已登记，尚未完成统一 runtime 验证；在 Epona 的时间轴协议确认前，不把 WorldDrive 的不完整输出当作正式对照。
+- 官方 TA-DWM 1024 像素 world-model、stage-2 planner/refiner、trajectory anchors 与 CogVideoX VAE 已完成哈希验证和统一 runtime 验证。
+- 固定 history/noise 的 5 样本 `left/logged/right` 动作干预共生成 120 帧：left/right 像素 L1 均值 `0.0871`，bootstrap 95% 下界 `0.0736`；完全相同 seed 的重复生成 24/24 PNG 逐字节一致，排除了采样噪声解释。
+- 候选盲 Level-1 对三分支的终点横向排序为 `12/15 = 80.0%`，yaw 排序为 `14/15 = 93.3%`；精确 branch Top-1 为 `7/15 = 46.7%`，说明图像能读出方向/顺序，但不足以精确区分相邻幅值。
+- 官方 stage-2 native planner 已在 5 个样本上导出并重复运行逐字节一致；refiner 在 4/5 样本中改变 stage-1 top-1，确认执行的是完整原生规划链。
+- 原生 action-conditioned future 的 Level-1：5/5 有效，joint error `0.7676`、soft compatibility `0.5352`、lateral MAE `0.3155 m`、yaw MAE `0.0391 rad`、curvature MAE `0.00816 1/m`，速度未进入主分。
+- 时间倒序后 joint error 从 `0.7676` 升至 `4.0347`，5/5 正常顺序更好；误差增量 `+3.0623`，bootstrap 95% CI `[1.6785, 4.4460]`。错身份 action 控制的 identity Top-1 为 `4/5 = 80%`，平均 margin `+3.8920`，95% CI `[2.9155, 5.0420]`。
+- 结论：WorldDrive 已从“盘上未测 checkpoint”升级为已验证的 `native_action_conditioned` 正例。它证明原生动作与像素未来存在可读的一致性和时间特异性；仍不能报告正式 CCFC，因为缺少同一语义场景 clear/risk 干预产生的两条原生最终动作，且 `n=5`。
+
+详细实验、哈希和产物路径见 `docs/WORLDDRIVE_NATIVE_PILOT_20260901_ZH.md`。
+
+### SimWAM
+
 - SimWAM 推理侧主要输出动作、不输出 future image，只能做 action-only 规划诊断。
 
 ## 5. 能力分层：覆盖多数 WAM
@@ -198,10 +209,10 @@ Waymo 已放在服务器独立存储盘：
 
 ## 9. 下一步最短路径
 
-1. **统一 adapter**：优先选择能保留 `source_key/branch_id`、输出 8 帧或可审计 4 秒时间轴、暴露 native action head 并支持固定 seed intervention 的 WAM。
-2. **action-response gate**：在 5 个 strict twins 上跑 `logged/left/right` 或 `clear/risk`，先检验图像是否随动作条件变化。
-3. **正式 join**：按 `branch_id` 合并 WAM future images、native action、独立 realized state、task score 和 lineage，之后才计算 CCFC/FCS。
-4. **扩展统计**：补齐 NAVSIM cache 到 25 个 non-overlap 窗口，按相同 schema 整理 Waymo，并至少让两个 WAM 通过 response gate。
+1. **构造 WorldDrive 原生双分支**：用语义保持、只改变风险条件的 clear/risk 输入干预，让同一个 stage-2 planner 在每支上独立输出最终动作；禁止用 top-k proposal 冒充最终 native action。
+2. **固定 nuisance 后生成**：两支使用相同生成 seed、相同时间轴与相同 checkpoint，分别生成 8 帧/4 秒 future，通过 action-response、identity 和 time-order 门。
+3. **正式 CCFC join**：按 `counterfactual_group_id/branch_id` 合并两支 native action、generated future 和 lineage，readiness audit 通过后才输出 CCFC。
+4. **Level-3 与统计扩展**：接入独立 PDM rollout 的 realized state/task success，并将样本从 5 个 strict pilot 扩到至少 25 个 scene-aware non-overlap 窗口；随后复现第二个 WAM。
 
 ## 10. 关键代码入口
 
@@ -213,12 +224,10 @@ scripts/run_navsim_counterfactual_rollouts.py
 scripts/attach_counterfactual_rollouts.py
 scripts/build_wam_level1_continuous_manifest.py
 scripts/finalize_wam_realized_metrics.py
+scripts/run_worlddrive_native_planner.py
+scripts/run_worlddrive_native_future.py
+scripts/build_worlddrive_native_level1_manifest.py
+scripts/analyze_worlddrive_native_level1.py
 ```
 
-仓库当前 clean。最近关键提交：
-
-```text
-98f324b feat: gate WAM scoring by capability tier
-acaef21 docs: distinguish strict cache-aligned WAM pool
-139cac9 feat: stage cache-aligned WAM rollouts
-```
+当前工作树含本轮 WorldDrive/DriveVA 实验代码，尚未形成收敛提交；不得再写“仓库 clean”。
