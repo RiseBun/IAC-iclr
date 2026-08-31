@@ -108,8 +108,8 @@ def inspect_known_wams(home: Path) -> list[WAMCapability]:
             native_history="configurable condition frames",
             native_future="variable autoregressive rollout",
             checkpoint_source="Hugging Face Kevin-thu/Epona",
-            status="independent_candidate_vae_pending",
-            reason="The official test_ctrl.py accepts user-provided poses and yaws and generates controlled future frames. Runtime also requires the published DCAE VAE checkpoint.",
+            status="runtime_verified_native_grid_pending",
+            reason="The server smoke test generated logged/left/right branches and a 20-frame, 4-second rollout with verified pose/yaw injection. Its native grid is 5 Hz (0.2 s), so canonical 0.5-second scoring still requires an explicit, audited resampling adapter.",
         ),
         WAMCapability(
             model_id="worlddrive_tadwm",
