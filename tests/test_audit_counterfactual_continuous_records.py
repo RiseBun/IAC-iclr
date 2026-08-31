@@ -41,3 +41,17 @@ def test_command_pair_is_structurally_ready_but_not_formal_foresight():
     assert report["structural_level2_input_ready"] is True
     assert report["formal_level2_input_ready"] is False
     assert report["claim_scope"] == "command_conditioned_action_image_consistency"
+
+
+def test_internal_future_intervention_is_mediation_ready_but_not_semantic_hazard():
+    rows = [
+        _branch("future_native", [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]),
+        _branch("future_reverse", [[1.0, 0.2, 0.1], [2.0, 0.4, 0.2]]),
+    ]
+    for row in rows:
+        row["intervention_type"] = "internal_future_latent_permutation"
+    report = audit_records(rows, role_a="future_native", role_b="future_reverse")
+    assert report["structural_level2_input_ready"] is True
+    assert report["formal_foresight_input_ready"] is True
+    assert report["semantic_hazard_input_ready"] is False
+    assert report["claim_scope"] == "internal_foresight_mediation"

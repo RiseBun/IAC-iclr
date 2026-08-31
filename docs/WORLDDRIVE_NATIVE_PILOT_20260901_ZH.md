@@ -205,3 +205,77 @@ claim_scope = command_conditioned_action_image_consistency
 /mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/results/command_counterfactual_eval25/generated_selected_20step/ccfc_swap.json
 /mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/results/command_counterfactual_eval25/generated_selected_20step/ccfc_swap_lift.json
 ```
+
+## 10. stage-2 imagined-future 直接干预
+
+### 10.1 为什么做这一项
+
+command 实验只证明 `C→A→pixel F`。要回答动作是否真的依赖模型想象的未来，本实验直接展开官方 stage-2 refiner，并固定：
+
+- history、ego status；
+- 5 条 top-k candidate trajectory 及其 embedding；
+- visual token、checkpoint 和所有权重。
+
+唯一干预是把 5 个 candidate-conditioned `future_scene_embed` 的对应关系按预注册逆序 `[4,3,2,1,0]` 置换，再由同一个 `traj_refine_decoder + reward head` 重新选择最终动作。手工展开路径与官方 refiner 的原生轨迹、全部排序权重逐值一致，最大误差均为 `0`。
+
+这是 `imagined F→A` 的内部因果中介干预，但不是可解释的 `clear/risk` hazard 干预。
+
+### 10.2 25 个 non-overlap 历史的动作响应
+
+| 结果 | 数值 |
+|---|---:|
+| 最终 candidate rank 改变 | `11/25 = 44%` |
+| 最终轨迹改变 | `11/25 = 44%` |
+| 通过主分 lateral/yaw material gate | `1/25 = 4%` |
+| material rate Wilson 95% CI | `[0.7%, 19.5%]` |
+
+material gate 在看像素结果前固定为：最大 lateral delta `≥1.0 m` 或最大 yaw delta `≥0.1 rad`。纵向变化不进入该门，因为速度/绝对纵向幅度已经从正式 Level-1 主分移除。不能为了增加样本数事后降低门槛。
+
+结论：WorldDrive 的 stage-2 动作并非完全忽略 imagined future，但在当前 25 条样本中，能传到正式横向/转向主分的强响应只有 1 条，不能支持“普遍且稳健的 future-driven action head”。
+
+### 10.3 唯一 material pair 的像素与 IAC 闭环
+
+- 固定同一 diffusion noise 后，双支 pixel future L1 为 `0.109484`，超过 action-response 门槛 `0.005`；
+- Level-1 两支均有效；联合误差均值 `2.1702`，lateral MAE `0.9254 m`，yaw MAE `0.1284 rad`；
+- observed CCFC：metric `0.0000`、scale-free `0.8351`、arc-relative `0.7625`；
+- image-decoder swap：metric `0.0000`、scale-free `0.1328`、arc-relative `0.4058`；
+- observed − swap：metric `0.0000`、scale-free `+0.7023`、arc-relative `+0.3567`。
+
+该 pair 证明存在一条完整的内部链：
+
+```text
+candidate-conditioned imagined-future latent
+  → native stage-2 action changes
+  → fixed-noise pixel future changes
+  → candidate-blind Level-1 reads a matching scale-free/arc-relative change
+```
+
+但 `n=1` 没有总体置信区间，metric 分数为 `0`，且干预没有 hazard 语义。因此审计分层为：
+
+```text
+structural_level2_input_ready = true
+formal_foresight_input_ready = true
+semantic_hazard_input_ready = false
+claim_scope = internal_foresight_mediation
+```
+
+### 10.4 决策
+
+WorldDrive 保留为：
+
+1. action-conditioned pixel future 的正例；
+2. 内部 future mediation 的稀疏正例/模型诊断；
+3. IAC fail-closed 的案例：25 条不能因 1 条漂亮结果升级为正式模型级 CCFC。
+
+下一步不再换 flow/depth，也不继续调 WorldDrive 的阈值。正式旗舰结果需要一个能施加语义 clear/risk future 干预、并在独立样本池中稳定改变 native action 的 WAM；否则只能报告 capability-stratified Level-1 与内部中介诊断。
+
+服务器产物：
+
+```text
+/mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/results/future_latent_intervention_eval25/intervention_response_summary.json
+/mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/results/future_latent_intervention_eval25/material_gate.json
+/mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/results/future_latent_intervention_eval25/action_response_gate.json
+/mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/results/future_latent_intervention_eval25/readiness.json
+/mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/results/future_latent_intervention_eval25/ccfc.json
+/mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/results/future_latent_intervention_eval25/ccfc_swap_lift.json
+```

@@ -24,6 +24,27 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
         return [json.loads(line) for line in stream if line.strip()]
 
 
+def classify_counterfactual_claim(
+    *, intervention_types: list[str], specificity_controls: list[str], structurally_ready: bool
+) -> dict[str, Any]:
+    """Separate structural, internal-foresight, and semantic-hazard claims."""
+    command_only = intervention_types == ["navigation_command_onehot"]
+    internal_future_only = intervention_types == ["internal_future_latent_permutation"]
+    formal_foresight_ready = structurally_ready and not command_only and not specificity_controls
+    semantic_hazard_ready = formal_foresight_ready and not internal_future_only
+    scope = (
+        "specificity_control" if specificity_controls else
+        "command_conditioned_action_image_consistency" if command_only else
+        "internal_foresight_mediation" if internal_future_only else
+        "semantic_foresight_counterfactual_consistency"
+    )
+    return {
+        "formal_foresight_ready": bool(formal_foresight_ready),
+        "semantic_hazard_ready": bool(semantic_hazard_ready),
+        "claim_scope": scope,
+    }
+
+
 def audit_pair(
     group_id: str,
     roles: dict[str, dict[str, Any]],
@@ -147,12 +168,20 @@ def main() -> None:
         if row.get("specificity_control") is not None
     })
     structurally_eligible = bool(reports) and all(row["causal_claim_eligible"] for row in reports)
-    command_only = intervention_types == ["navigation_command_onehot"]
-    formal_foresight_eligible = structurally_eligible and not command_only and not specificity_controls
+    claim = classify_counterfactual_claim(
+        intervention_types=intervention_types,
+        specificity_controls=specificity_controls,
+        structurally_ready=structurally_eligible,
+    )
+    formal_foresight_eligible = claim["formal_foresight_ready"]
+    semantic_hazard_eligible = claim["semantic_hazard_ready"]
     for report in reports:
         report["structural_pair_eligible"] = report["causal_claim_eligible"]
         report["formal_foresight_claim_eligible"] = bool(
-            report["causal_claim_eligible"] and not command_only and not specificity_controls
+            report["causal_claim_eligible"] and formal_foresight_eligible
+        )
+        report["semantic_hazard_claim_eligible"] = bool(
+            report["causal_claim_eligible"] and semantic_hazard_eligible
         )
         report["causal_claim_eligible"] = report["formal_foresight_claim_eligible"]
     output = {
@@ -163,9 +192,8 @@ def main() -> None:
         "causal_claim_eligible": formal_foresight_eligible,
         "structural_pair_eligible": structurally_eligible,
         "formal_foresight_claim_eligible": formal_foresight_eligible,
-        "claim_scope": "specificity_control" if specificity_controls else (
-            "command_conditioned_action_image_consistency" if command_only else "foresight_counterfactual_consistency"
-        ),
+        "semantic_hazard_claim_eligible": semantic_hazard_eligible,
+        "claim_scope": claim["claim_scope"],
         "intervention_types": intervention_types,
         "specificity_controls": specificity_controls,
         "summary": {

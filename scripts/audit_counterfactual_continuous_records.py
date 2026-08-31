@@ -11,7 +11,11 @@ from typing import Any
 
 import numpy as np
 
-from scripts.evaluate_counterfactual_continuous_alignment import audit_pair, read_jsonl
+from scripts.evaluate_counterfactual_continuous_alignment import (
+    audit_pair,
+    classify_counterfactual_claim,
+    read_jsonl,
+)
 
 
 def audit_records(
@@ -55,18 +59,22 @@ def audit_records(
         str(row.get("specificity_control")) for row in rows if row.get("specificity_control") is not None
     })
     structurally_ready = bool(reports) and len(ready) == len(reports)
-    command_only = intervention_types == ["navigation_command_onehot"]
-    formal_foresight_ready = structurally_ready and not command_only and not specificity_controls
+    claim = classify_counterfactual_claim(
+        intervention_types=intervention_types,
+        specificity_controls=specificity_controls,
+        structurally_ready=structurally_ready,
+    )
     return {
         "protocol": "counterfactual-continuous-readiness-audit-v1",
         "groups": len(reports),
         "records": len(rows),
         "ready_groups": len(ready),
         "invalid_groups": len(reports) - len(ready),
-        "formal_level2_input_ready": formal_foresight_ready,
+        "formal_level2_input_ready": claim["formal_foresight_ready"],
         "structural_level2_input_ready": structurally_ready,
-        "formal_foresight_input_ready": formal_foresight_ready,
-        "claim_scope": "command_conditioned_action_image_consistency" if command_only else "foresight_counterfactual_consistency",
+        "formal_foresight_input_ready": claim["formal_foresight_ready"],
+        "semantic_hazard_input_ready": claim["semantic_hazard_ready"],
+        "claim_scope": claim["claim_scope"],
         "intervention_types": intervention_types,
         "specificity_controls": specificity_controls,
         "require_eight_frame_four_second": bool(require_eight_frame_four_second),

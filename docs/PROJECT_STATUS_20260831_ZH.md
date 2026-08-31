@@ -125,6 +125,10 @@ history + future front-camera frames
 - 结论：WorldDrive 已从“盘上未测 checkpoint”升级为已验证的 `native_action_conditioned` 正例。它证明原生动作与像素未来存在可读的一致性和时间特异性；仍不能报告正式 CCFC，因为缺少同一语义场景 clear/risk 干预产生的两条原生最终动作，且 `n=5`。
 - 后续 command counterfactual 扩展使用 25 个 scene-aware non-overlap 历史，固定比较 `command_0/command_2`，并在生成前按最大横向差 `≥1 m` 或最大 yaw 差 `≥0.1 rad` 选出 10 对 material native actions。10/10 action-response gate 通过；observed 的 metric/scale-free/arc-relative 分别为 `0.3089/0.8297/0.8247`，swap 为 `0.0413/0.1499/0.1798`。paired lift 的 bootstrap 95% CI 分别为 `[0.1411,0.3788]`、`[0.5105,0.8340]`、`[0.4821,0.7960]`。
 - command 直接进入 action head，因此新审计明确给出 `structural_level2_input_ready=true`、`formal_foresight_input_ready=false`；上述数字是 command-conditioned action-image consistency，不是 hazard foresight CCFC。
+- 已进一步直接干预 stage-2 内部 candidate-conditioned imagined-future latent：固定 history、ego status、top-k actions/embeddings、visual tokens 和权重，只把 5 个 future latent 按 `[4,3,2,1,0]` 置换。手工展开路径与官方 refiner 的原生轨迹和排序权重最大误差均为 `0`。
+- 在 25 个 non-overlap 历史上，最终轨迹改变 `11/25`，但按冻结的 lateral `≥1 m` 或 yaw `≥0.1 rad` 正式主分门槛只有 `1/25` 通过，Wilson 95% CI `[0.7%,19.5%]`。这说明 imagined future 并非完全不参与 action head，但强横向/转向因果响应稀疏。
+- 唯一 material pair 的 fixed-noise pixel L1 为 `0.1095`；observed 的 metric/scale-free/arc-relative 为 `0/0.8351/0.7625`，image-swap 为 `0/0.1328/0.4058`。它是完整的内部 `imagined F→A→pixel F→Level-1` 个例，但 `n=1`、metric 为 `0`，不能升级成模型级正式结果。
+- 当前审计区分三个层次：`formal_foresight_input_ready=true`（内部 future 中介成立）、`semantic_hazard_input_ready=false`（没有 clear/risk 语义）、`claim_scope=internal_foresight_mediation`。WorldDrive 因而是稀疏中介正例，不是稳健的 semantic CCFC flagship。
 
 详细实验、哈希和产物路径见 `docs/WORLDDRIVE_NATIVE_PILOT_20260901_ZH.md`。
 
@@ -202,7 +206,7 @@ Waymo 已放在服务器独立存储盘：
 
 ## 8. 当前不能宣称的内容
 
-1. 不能说 IAC 已证明 WAM 因果性；
+1. 不能把 WorldDrive 的 `1/25` 内部中介个例表述为模型总体已经具有稳健 WAM 因果性；
 2. 不能把 DrivingWorld 旧 reciprocal CCFC 当成正式 FCS；
 3. 不能把 9-twin scaffold 当作严格 5-twin 正式池；
 4. 不能把 PDM static-cached-traffic 兼容模式当成真实交通参与者闭环的最终替代；
@@ -211,10 +215,10 @@ Waymo 已放在服务器独立存储盘：
 
 ## 9. 下一步最短路径
 
-1. **构造 WorldDrive hazard 原生双分支**：command 双分支管线已经验证完毕；下一步必须用语义保持、只改变风险条件的 clear/risk 输入干预，让同一个 stage-2 planner 在每支上独立输出最终动作。禁止用 command pilot 或 top-k proposal 冒充 hazard foresight。
-2. **固定 nuisance 后生成**：两支使用相同生成 seed、相同时间轴与相同 checkpoint，分别生成 8 帧/4 秒 future，通过 action-response、identity 和 time-order 门。
-3. **正式 CCFC join**：按 `counterfactual_group_id/branch_id` 合并两支 native action、generated future 和 lineage，readiness audit 通过后才输出 CCFC。
-4. **Level-3 与统计扩展**：接入独立 PDM rollout 的 realized state/task success，并将样本从 5 个 strict pilot 扩到至少 25 个 scene-aware non-overlap 窗口；随后复现第二个 WAM。
+1. **停止优化 WorldDrive 阈值**：内部 imagined-future 干预已给出 `1/25` material response；再降门槛或只展示该个例会引入选择偏差。
+2. **选择真正可干预的评测对象**：下一模型必须同时提供像素/可解码 future、独立 native action head，以及语义 clear/risk future intervention；先做 action material-response gate，再生成昂贵像素 future。没有这三个能力就按分层协议只报告 Level-1 或受限诊断。
+3. **复用已收敛流水线**：固定 nuisance 后生成 8 帧/4 秒 future，经 action-response、Level-1、identity/time-order、decoder-swap 和 readiness audit；不再针对单模型改 scorer。
+4. **Level-3 与统计扩展**：仅当至少 25 个独立窗口中 material response 足够且 specificity lift 的 CI 为正，再接独立 rollout 的 realized state/task success 并报告 FCS。
 
 ## 10. 关键代码入口
 
@@ -228,6 +232,8 @@ scripts/build_wam_level1_continuous_manifest.py
 scripts/finalize_wam_realized_metrics.py
 scripts/run_worlddrive_native_planner.py
 scripts/run_worlddrive_native_future.py
+scripts/run_worlddrive_future_latent_intervention.py
+scripts/analyze_worlddrive_future_latent_intervention.py
 scripts/build_worlddrive_native_level1_manifest.py
 scripts/analyze_worlddrive_native_level1.py
 ```

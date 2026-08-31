@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Select pre-registered material native command pairs before pixel generation."""
+"""Select pre-registered material native action pairs before pixel generation."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def main() -> None:
     details = []
     for group_id, branches in sorted(grouped.items()):
         if args.branch_a not in branches or args.branch_b not in branches:
-            raise ValueError(f"{group_id}: missing requested command pair")
+            raise ValueError(f"{group_id}: missing requested action pair")
         first = np.asarray(branches[args.branch_a]["stage2_trajectory"], dtype=np.float64)
         second = np.asarray(branches[args.branch_b]["stage2_trajectory"], dtype=np.float64)
         delta = second - first
@@ -53,7 +53,7 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text("".join(json.dumps(row) + "\n" for row in selected), encoding="utf-8")
     report = {
-        "protocol": "worlddrive-native-command-material-pair-gate-v1",
+        "protocol": "worlddrive-native-action-material-pair-gate-v1",
         "groups_input": len(grouped),
         "groups_selected": len(selected) // 2,
         "records_selected": len(selected),
