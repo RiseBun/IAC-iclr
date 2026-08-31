@@ -85,6 +85,24 @@ class ScoreActionResponseGateTest(unittest.TestCase):
             self.assertTrue(report["passed"])
             self.assertFalse(report["issues"])
 
+    def test_named_command_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rows = []
+            for branch, value, lateral in (("command_0", 255, 2.0), ("command_2", 0, -2.0)):
+                rows.append({
+                    "counterfactual_group_id": "command-pair",
+                    "branch_id": branch,
+                    "future_images": [_png(root / f"{branch}.png", value)],
+                    "future_images_source": "worlddrive_generated",
+                    "action_trajectory": [[1.0, lateral, 0.2 * np.sign(lateral)]],
+                })
+            report = score_gate(
+                rows, min_l1=0.005, branch_a="command_0", branch_b="command_2"
+            )
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["groups_with_pair"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

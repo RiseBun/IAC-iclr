@@ -131,3 +131,77 @@ action waypoint、候选 bank 和 logged future state 均未输入图像解码�
 /mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/results/native_future_5sample_20step/level1_scores_time_reversed.jsonl
 /mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/results/native_future_5sample_20step/native_specificity_report.json
 ```
+
+## 9. 25 个 non-overlap command counterfactual 扩展
+
+### 9.1 为什么先做 command，而不伪造 hazard
+
+WorldDrive 的 stage-2 planner 是确定性的；同一 history 和 ego status 只产生一条最终动作。为了先验证“原生双动作 → 双像素未来 → IAC delta”的完整管线，本轮只干预 NAVSIM 4 维 one-hot navigation command。command 直接进入 action head，因此它验证的是条件一致性，不是“风险未来驱动动作”。
+
+冻结规则：
+
+- 数据：25 个 `scene-aware non-overlap` NAVSIM 历史；
+- 固定 pair：`command_0 ↔ command_2`，不按结果改 pair；
+- material action gate：最大横向差 `≥1.0 m` 或最大 yaw 差 `≥0.1 rad`；
+- gate 在像素生成前执行；
+- 两支共享 history、VAE seed、diffusion noise、checkpoint 和 8 帧/4 秒时间轴；
+- 原 Level-1 manifest 不含 native command，样本构建器记录为 `default_straight_missing_native_field`；干预分支随后显式覆盖为 command 0/2。因此本实验不声称恢复了数据集原始导航意图。
+
+25 个历史中 10 对通过 material gate，共生成 20 条 future。action-response gate：
+
+- mean paired pixel L1：`0.156734`
+- bootstrap 95% 下界：`0.114353`
+- 固定门槛：`0.005`
+- 10/10 pair 有效
+
+### 9.2 Level-1 与双分支结果
+
+20/20 Level-1 解码成功：
+
+| 指标 | 结果 |
+|---|---:|
+| weighted joint error | `1.7469` |
+| soft compatibility | `0.2678` |
+| lateral MAE | `0.4760 m` |
+| yaw MAE | `0.0906 rad` |
+| curvature MAE | `0.05164 1/m` |
+
+速度未进入主分。
+
+| 双分支口径 | observed | image-swap control | paired lift | lift 95% CI | observed > swap |
+|---|---:|---:|---:|---:|---:|
+| metric | `0.3089` | `0.0413` | `+0.2676` | `[0.1411, 0.3788]` | `7/10` |
+| scale-free | `0.8297` | `0.1499` | `+0.6798` | `[0.5105, 0.8340]` | `10/10` |
+| arc-relative | `0.8247` | `0.1798` | `+0.6449` | `[0.4821, 0.7960]` | `10/10` |
+
+正确配对相对 swap 的提升在三种口径上均显著为正，说明 IAC 读出的响应与对应 native action 有身份特异性。
+
+### 9.3 为什么仍不升级为正式 foresight CCFC
+
+审计输出：
+
+```text
+structural_level2_input_ready = true
+formal_level2_input_ready = false
+formal_foresight_input_ready = false
+claim_scope = command_conditioned_action_image_consistency
+```
+
+原因不是代码或数据 lineage 不完整，而是 command 同时是 action head 的直接输入。该实验能证明“模型在不同导航条件下产生不同原生动作，像素未来按正确方向、时间和身份响应”，不能证明“模型看到 imagined hazard 后才改变动作”。
+
+### 9.4 米制幅度的独立边界
+
+真实 NAVSIM 78 条样本的 turn-regime 审计显示，`|yaw_end|≥0.8 rad` 的 15 条强转弯上，Level-1 终点横向误差均值 `1.761 m`、P90 `3.490 m`。25 条 non-overlap holdout 中强转弯只有 4 条，终点横向误差均值 `1.202 m`、P90 `2.537 m`。当前 CCFC metric 的平移容差固定为 `0.5 m`，因此极端转弯米制幅度尚未充分校准。
+
+不能据此放宽容差来提高 WorldDrive 分数。正确做法是新增独立强转弯校准/验证池，或把 metric 继续作为严格分数，同时报告 scale-free/arc-relative 的形状证据。
+
+### 9.5 扩展产物
+
+```text
+/mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/datasets/navsim_eval25_level1/
+/mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/results/command_counterfactual_eval25/material_pair_gate.json
+/mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/results/command_counterfactual_eval25/generated_selected_20step/action_response_gate.json
+/mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/results/command_counterfactual_eval25/generated_selected_20step/ccfc.json
+/mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/results/command_counterfactual_eval25/generated_selected_20step/ccfc_swap.json
+/mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/WorldDrive/results/command_counterfactual_eval25/generated_selected_20step/ccfc_swap_lift.json
+```

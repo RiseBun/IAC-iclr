@@ -28,3 +28,16 @@ def test_audit_reports_missing_pair_without_throwing():
     report = audit_records([_branch("clear", [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])])
     assert report["formal_level2_input_ready"] is False
     assert report["groups_detail"][0]["issues"] == ["expected_exactly_one_clear_and_one_risk"]
+
+
+def test_command_pair_is_structurally_ready_but_not_formal_foresight():
+    first = _branch("command_0", [[1.0, 1.0, 0.1], [2.0, 2.0, 0.2]])
+    second = _branch("command_2", [[1.0, -1.0, -0.1], [2.0, -2.0, -0.2]])
+    for row in (first, second):
+        row["intervention_type"] = "navigation_command_onehot"
+    report = audit_records(
+        [first, second], role_a="command_0", role_b="command_2"
+    )
+    assert report["structural_level2_input_ready"] is True
+    assert report["formal_level2_input_ready"] is False
+    assert report["claim_scope"] == "command_conditioned_action_image_consistency"

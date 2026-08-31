@@ -42,14 +42,16 @@ def score_gate(
     min_l1: float = DEFAULT_MIN_L1,
     image_size: tuple[int, int] = (256, 144),
     seed: int = 0,
+    branch_a: str = "left",
+    branch_b: str = "right",
 ) -> dict[str, Any]:
     grouped: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
     issues = []
     for index, row in enumerate(rows):
         group = str(row.get("counterfactual_group_id") or row.get("source_key") or "")
-        mode = str(row.get("branch_mode") or "")
-        if not group or mode not in {"logged", "left", "right"}:
-            issues.append({"row": index, "reason": "need counterfactual_group_id and logged/left/right"})
+        mode = str(row.get("branch_mode") or row.get("branch_id") or "")
+        if not group or not mode:
+            issues.append({"row": index, "reason": "need counterfactual_group_id and branch_mode/branch_id"})
             continue
         source = str(row.get("future_images_source") or "")
         if source != "wam_generated" and not source.endswith("_generated"):
@@ -60,11 +62,11 @@ def score_gate(
     pair_action = []
     details = []
     for group, branches in sorted(grouped.items()):
-        if "left" not in branches or "right" not in branches:
-            issues.append({"group": group, "reason": "missing left or right branch"})
+        if branch_a not in branches or branch_b not in branches:
+            issues.append({"group": group, "reason": f"missing {branch_a} or {branch_b} branch"})
             continue
-        image_l1 = _image_distance(branches["left"]["future_images"], branches["right"]["future_images"], image_size)
-        action = _action_distance(branches["left"], branches["right"])
+        image_l1 = _image_distance(branches[branch_a]["future_images"], branches[branch_b]["future_images"], image_size)
+        action = _action_distance(branches[branch_a], branches[branch_b])
         pair_l1.append(image_l1)
         pair_action.append(action)
         details.append({
@@ -77,6 +79,9 @@ def score_gate(
     passed = bool(values.size) and lower is not None and lower > min_l1
     return {
         "protocol": "iac-action-response-gate-v1",
+        "branch_a": branch_a,
+        "branch_b": branch_b,
+        "groups_with_pair": len(details),
         "groups_with_left_right": len(details),
         "mean_left_right_image_l1": None if not values.size else float(values.mean()),
         "bootstrap_l1_lower_95": lower,
@@ -99,9 +104,11 @@ def main() -> None:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--min-l1", type=float, default=DEFAULT_MIN_L1)
+    parser.add_argument("--branch-a", default="left")
+    parser.add_argument("--branch-b", default="right")
     args = parser.parse_args()
     rows = [json.loads(line) for line in args.manifest.read_text(encoding="utf-8").splitlines() if line.strip()]
-    report = score_gate(rows, min_l1=args.min_l1)
+    report = score_gate(rows, min_l1=args.min_l1, branch_a=args.branch_a, branch_b=args.branch_b)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({k: v for k, v in report.items() if k != "pairs"}, indent=2))

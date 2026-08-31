@@ -14,7 +14,13 @@ import numpy as np
 from scripts.evaluate_counterfactual_continuous_alignment import audit_pair, read_jsonl
 
 
-def audit_records(rows: list[dict[str, Any]], *, require_eight_frame_four_second: bool = False) -> dict[str, Any]:
+def audit_records(
+    rows: list[dict[str, Any]],
+    *,
+    require_eight_frame_four_second: bool = False,
+    role_a: str = "clear",
+    role_b: str = "risk",
+) -> dict[str, Any]:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         groups[str(row.get("counterfactual_group_id"))].append(row)
@@ -22,10 +28,14 @@ def audit_records(rows: list[dict[str, Any]], *, require_eight_frame_four_second
     for group_id, branches in sorted(groups.items()):
         roles = {str(row.get("branch_role")): row for row in branches}
         issues: list[str] = []
-        if set(roles) != {"clear", "risk"} or len(branches) != 2:
-            issues.append("expected_exactly_one_clear_and_one_risk")
+        if set(roles) != {role_a, role_b} or len(branches) != 2:
+            issues.append(
+                "expected_exactly_one_clear_and_one_risk"
+                if (role_a, role_b) == ("clear", "risk")
+                else "expected_exactly_one_requested_pair"
+            )
         else:
-            issues.extend(audit_pair(group_id, roles))
+            issues.extend(audit_pair(group_id, roles, role_a=role_a, role_b=role_b))
         if require_eight_frame_four_second:
             for role, branch in roles.items():
                 times = np.asarray(branch.get("future_times_s") or [], dtype=np.float64)
@@ -38,14 +48,29 @@ def audit_records(rows: list[dict[str, Any]], *, require_eight_frame_four_second
             "issues": sorted(set(issues)),
         })
     ready = [item for item in reports if item["ready"]]
+    intervention_types = sorted({
+        str(row.get("intervention_type")) for row in rows if row.get("intervention_type") is not None
+    })
+    specificity_controls = sorted({
+        str(row.get("specificity_control")) for row in rows if row.get("specificity_control") is not None
+    })
+    structurally_ready = bool(reports) and len(ready) == len(reports)
+    command_only = intervention_types == ["navigation_command_onehot"]
+    formal_foresight_ready = structurally_ready and not command_only and not specificity_controls
     return {
         "protocol": "counterfactual-continuous-readiness-audit-v1",
         "groups": len(reports),
         "records": len(rows),
         "ready_groups": len(ready),
         "invalid_groups": len(reports) - len(ready),
-        "formal_level2_input_ready": bool(reports) and len(ready) == len(reports),
+        "formal_level2_input_ready": formal_foresight_ready,
+        "structural_level2_input_ready": structurally_ready,
+        "formal_foresight_input_ready": formal_foresight_ready,
+        "claim_scope": "command_conditioned_action_image_consistency" if command_only else "foresight_counterfactual_consistency",
+        "intervention_types": intervention_types,
+        "specificity_controls": specificity_controls,
         "require_eight_frame_four_second": bool(require_eight_frame_four_second),
+        "pair_roles": [role_a, role_b],
         "groups_detail": reports,
     }
 
@@ -55,12 +80,19 @@ def main() -> None:
     parser.add_argument("--records", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--require-eight-frame-four-second", action="store_true")
+    parser.add_argument("--role-a", default="clear")
+    parser.add_argument("--role-b", default="risk")
     args = parser.parse_args()
-    report = audit_records(read_jsonl(args.records), require_eight_frame_four_second=args.require_eight_frame_four_second)
+    report = audit_records(
+        read_jsonl(args.records),
+        require_eight_frame_four_second=args.require_eight_frame_four_second,
+        role_a=args.role_a,
+        role_b=args.role_b,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps({key: value for key, value in report.items() if key != "groups_detail"}, indent=2, ensure_ascii=False))
-    if not report["formal_level2_input_ready"]:
+    if not report["structural_level2_input_ready"]:
         raise SystemExit(2)
 
 

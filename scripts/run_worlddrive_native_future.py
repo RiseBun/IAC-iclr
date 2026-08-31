@@ -96,6 +96,7 @@ def main() -> None:
     with inference_context():
         for ordinal, native in enumerate(rows):
             sample_index = int(native.get("sample_index", ordinal))
+            branch_id = str(native.get("branch_id") or "native")
             sample_path = args.sample_root / "drivewam_samples_logged" / f"sample_{sample_index:06d}.pkl"
             sample = _read_sample(sample_path)
             history_sha256 = _history_digest(sample["images"])
@@ -135,11 +136,12 @@ def main() -> None:
             future_paths = _save_future(
                 latents=generated,
                 vae=vae,
-                output_dir=args.output_root / f"sample_{sample_index:06d}" / "native",
+                output_dir=args.output_root / f"sample_{sample_index:06d}" / branch_id,
             )
             output_rows.append({
                 "sample_id": native["sample_id"],
                 "sample_index": sample_index,
+                "branch_id": branch_id,
                 "source_key": native["source_key"],
                 "history_sha256": history_sha256,
                 "action_trajectory": action.tolist(),
@@ -159,6 +161,16 @@ def main() -> None:
                 "evidence_tier": "native_action_future_pair",
                 "causal_claim_eligible": False,
             })
+            for field in (
+                "counterfactual_group_id",
+                "branch_role",
+                "intervention_type",
+                "command_index",
+                "command_onehot",
+                "original_command_onehot",
+            ):
+                if field in native:
+                    output_rows[-1][field] = native[field]
             del history, posterior, visual, condition, shared_noise, action_embedding, generated
             if device.type == "cuda":
                 torch.cuda.empty_cache()

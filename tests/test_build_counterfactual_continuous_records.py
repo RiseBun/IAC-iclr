@@ -46,3 +46,14 @@ def test_rejects_unpaired_group():
         assert "expected_exactly_clear_and_risk" in str(error)
     else:
         raise AssertionError("expected unpaired group to fail")
+
+
+def test_assembles_custom_named_pair_without_relabeling():
+    rows, summary = build_records(
+        [_row("command_0", "a", 1.0), _row("command_2", "b", 0.8)],
+        [_score("a"), _score("b")],
+        role_a="command_0",
+        role_b="command_2",
+    )
+    assert summary["pair_roles"] == ["command_0", "command_2"]
+    assert {row["branch_role"] for row in rows} == {"command_0", "command_2"}

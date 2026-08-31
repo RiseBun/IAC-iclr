@@ -2,7 +2,7 @@
 
 更新时间：2026-09-01
 仓库：`RiseBun/IAC-iclr`  
-当前最新提交：`425f1be`
+当前最新提交：以仓库 `HEAD` 为准，本文件不再硬编码易过期的提交号。
 
 ## 一句话结论
 
@@ -123,6 +123,8 @@ history + future front-camera frames
 - 原生 action-conditioned future 的 Level-1：5/5 有效，joint error `0.7676`、soft compatibility `0.5352`、lateral MAE `0.3155 m`、yaw MAE `0.0391 rad`、curvature MAE `0.00816 1/m`，速度未进入主分。
 - 时间倒序后 joint error 从 `0.7676` 升至 `4.0347`，5/5 正常顺序更好；误差增量 `+3.0623`，bootstrap 95% CI `[1.6785, 4.4460]`。错身份 action 控制的 identity Top-1 为 `4/5 = 80%`，平均 margin `+3.8920`，95% CI `[2.9155, 5.0420]`。
 - 结论：WorldDrive 已从“盘上未测 checkpoint”升级为已验证的 `native_action_conditioned` 正例。它证明原生动作与像素未来存在可读的一致性和时间特异性；仍不能报告正式 CCFC，因为缺少同一语义场景 clear/risk 干预产生的两条原生最终动作，且 `n=5`。
+- 后续 command counterfactual 扩展使用 25 个 scene-aware non-overlap 历史，固定比较 `command_0/command_2`，并在生成前按最大横向差 `≥1 m` 或最大 yaw 差 `≥0.1 rad` 选出 10 对 material native actions。10/10 action-response gate 通过；observed 的 metric/scale-free/arc-relative 分别为 `0.3089/0.8297/0.8247`，swap 为 `0.0413/0.1499/0.1798`。paired lift 的 bootstrap 95% CI 分别为 `[0.1411,0.3788]`、`[0.5105,0.8340]`、`[0.4821,0.7960]`。
+- command 直接进入 action head，因此新审计明确给出 `structural_level2_input_ready=true`、`formal_foresight_input_ready=false`；上述数字是 command-conditioned action-image consistency，不是 hazard foresight CCFC。
 
 详细实验、哈希和产物路径见 `docs/WORLDDRIVE_NATIVE_PILOT_20260901_ZH.md`。
 
@@ -209,7 +211,7 @@ Waymo 已放在服务器独立存储盘：
 
 ## 9. 下一步最短路径
 
-1. **构造 WorldDrive 原生双分支**：用语义保持、只改变风险条件的 clear/risk 输入干预，让同一个 stage-2 planner 在每支上独立输出最终动作；禁止用 top-k proposal 冒充最终 native action。
+1. **构造 WorldDrive hazard 原生双分支**：command 双分支管线已经验证完毕；下一步必须用语义保持、只改变风险条件的 clear/risk 输入干预，让同一个 stage-2 planner 在每支上独立输出最终动作。禁止用 command pilot 或 top-k proposal 冒充 hazard foresight。
 2. **固定 nuisance 后生成**：两支使用相同生成 seed、相同时间轴与相同 checkpoint，分别生成 8 帧/4 秒 future，通过 action-response、identity 和 time-order 门。
 3. **正式 CCFC join**：按 `counterfactual_group_id/branch_id` 合并两支 native action、generated future 和 lineage，readiness audit 通过后才输出 CCFC。
 4. **Level-3 与统计扩展**：接入独立 PDM rollout 的 realized state/task success，并将样本从 5 个 strict pilot 扩到至少 25 个 scene-aware non-overlap 窗口；随后复现第二个 WAM。

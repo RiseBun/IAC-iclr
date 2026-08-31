@@ -60,11 +60,15 @@ def main() -> None:
     parser.add_argument("--sample-root", type=Path, required=True)
     parser.add_argument("--history-output-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--branch-ids", nargs="+", help="optional branch_id allow-list")
     args = parser.parse_args()
 
     generated = _read_jsonl(args.generated_manifest)
     output = []
     for ordinal, generated_row in enumerate(generated):
+        branch_id = str(generated_row.get("branch_id") or "native")
+        if args.branch_ids and branch_id not in set(args.branch_ids):
+            continue
         if not generated_row.get("native_action_head_recorded"):
             raise ValueError(f"row {ordinal}: native action head is not recorded")
         index = int(generated_row.get("sample_index", ordinal))
@@ -90,6 +94,12 @@ def main() -> None:
             "sample_id": generated_row["sample_id"],
             "scene_id": str(sample["metadata"].get("scene_token", generated_row["sample_id"])),
             "source_key": generated_row["source_key"],
+            "counterfactual_group_id": generated_row.get("counterfactual_group_id"),
+            "branch_id": branch_id,
+            "branch_role": branch_id,
+            "intervention_type": generated_row.get("intervention_type"),
+            "history_fingerprint": generated_row["history_sha256"],
+            "nuisance_seed": generated_row["seed"],
             "history_frame_paths": history_paths,
             "future_frame_paths": future,
             "history_times_s": [-1.5, -1.0, -0.5, 0.0],
@@ -101,16 +111,18 @@ def main() -> None:
             "gt_candidate_id": "worlddrive_native_action",
             "action_trajectory": action.tolist(),
             "action_trajectory_source": "wam_action_head",
-            "future_images_source": "worlddrive_generated",
+            "future_images_source": "wam_generated",
             "wam_model_id": generated_row["model_id"],
             "metadata": {
                 "protocol": "worlddrive-native-action-future-level1-v1",
+                "generator_output_source": generated_row["future_images_source"],
                 "history_ego_state": _history_state(sample),
                 "candidate_blind_image_branch": True,
                 "candidate_bank_used_by_decoder": False,
                 "action_waypoint_used_by_image_branch": False,
                 "native_action_head_recorded": True,
                 "action_origin": generated_row["action_origin"],
+                "intervention_type": generated_row.get("intervention_type"),
                 "planner_checkpoint_sha256": generated_row["planner_checkpoint_sha256"],
                 "world_model_checkpoint_sha256": generated_row["world_model_checkpoint_sha256"],
                 "evidence_tier": "native_action_future_pair",

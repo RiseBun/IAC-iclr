@@ -18,7 +18,13 @@ def _read(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def build_records(manifest_rows: list[dict[str, Any]], score_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def build_records(
+    manifest_rows: list[dict[str, Any]],
+    score_rows: list[dict[str, Any]],
+    *,
+    role_a: str = "clear",
+    role_b: str = "risk",
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     scores = {str(row.get("sample_id")): row for row in score_rows}
     records: list[dict[str, Any]] = []
     missing_scores: list[str] = []
@@ -31,8 +37,8 @@ def build_records(manifest_rows: list[dict[str, Any]], score_rows: list[dict[str
             continue
         group_id = str(row.get("counterfactual_group_id") or "")
         role = str(row.get("branch_role") or "")
-        if not group_id or role not in {"clear", "risk"}:
-            raise ValueError(f"{sample_id}: counterfactual_group_id and branch_role(clear/risk) are required")
+        if not group_id or role not in {role_a, role_b}:
+            raise ValueError(f"{sample_id}: counterfactual_group_id and branch_role({role_a}/{role_b}) are required")
         if score.get("decoder", {}).get("protocol") != "candidate-blind-continuous-trajectory-v1":
             raise ValueError(f"{sample_id}: score is not a candidate-blind continuous decoder output")
         if score.get("candidate_bank_used_by_decoder") is not False:
@@ -53,22 +59,29 @@ def build_records(manifest_rows: list[dict[str, Any]], score_rows: list[dict[str
             "action_trajectory_source": row.get("action_trajectory_source") or "wam_action_head",
             "candidate_bank_used_by_decoder": False,
             "decoder": score["decoder"],
+            "intervention_type": row.get("intervention_type") or (row.get("metadata") or {}).get("intervention_type"),
+            "specificity_control": row.get("specificity_control") or (row.get("metadata") or {}).get("specificity_control"),
         }
         records.append(record)
         groups[group_id].append(record)
     issues = []
     for group_id, branches in sorted(groups.items()):
         roles = {str(branch["branch_role"]): branch for branch in branches}
-        if set(roles) != {"clear", "risk"} or len(branches) != 2:
-            issues.append({"counterfactual_group_id": group_id, "reason": "expected_exactly_clear_and_risk", "branch_count": len(branches)})
+        if set(roles) != {role_a, role_b} or len(branches) != 2:
+            reason = (
+                "expected_exactly_clear_and_risk"
+                if (role_a, role_b) == ("clear", "risk")
+                else "expected_exactly_requested_pair"
+            )
+            issues.append({"counterfactual_group_id": group_id, "reason": reason, "branch_count": len(branches)})
             continue
-        clear, risk = roles["clear"], roles["risk"]
+        clear, risk = roles[role_a], roles[role_b]
         for field in ("history_fingerprint", "wam_model_id", "nuisance_seed", "future_times_s"):
             if clear.get(field) != risk.get(field):
                 issues.append({"counterfactual_group_id": group_id, "reason": f"mismatched_{field}"})
     if missing_scores or issues:
         raise ValueError(json.dumps({"missing_scores": missing_scores, "pair_issues": issues}, indent=2))
-    return records, {"protocol": "counterfactual-continuous-record-assembly-v1", "groups": len(groups), "records": len(records)}
+    return records, {"protocol": "counterfactual-continuous-record-assembly-v1", "groups": len(groups), "records": len(records), "pair_roles": [role_a, role_b]}
 
 
 def main() -> None:
@@ -76,8 +89,12 @@ def main() -> None:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--scores", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--role-a", default="clear")
+    parser.add_argument("--role-b", default="risk")
     args = parser.parse_args()
-    records, summary = build_records(_read(args.manifest), _read(args.scores))
+    records, summary = build_records(
+        _read(args.manifest), _read(args.scores), role_a=args.role_a, role_b=args.role_b
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text("".join(json.dumps(row, ensure_ascii=True, separators=(",", ":")) + "\n" for row in records), encoding="utf-8")
     print(json.dumps(summary | {"output": str(args.output.resolve())}, indent=2))
