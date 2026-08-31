@@ -2,7 +2,7 @@
 
 更新时间：2026-08-31  
 仓库：`RiseBun/IAC-iclr`  
-当前最新提交：`98f324b`
+当前最新提交：`e4394bf`
 
 ## 一句话结论
 
@@ -103,8 +103,9 @@ history + future front-camera frames
 ### Epona
 
 - 历史 generated compatibility `0.3279`，control compatibility `0.6352`。
-- 有控制入口，但现有脚本仍是短 horizon（约 4 个 future frame），尚未对齐固定 8 帧 / 4 秒协议。
-- 仍需独立 VAE/runtime 验证。
+- 有控制入口。服务器已完成模型和 VAE 的单样本 runtime smoke：3 个 logged/left/right 分支均成功生成；进一步的 8-step smoke 也成功生成 3×8 张未来图像，`action_injection_verified=true`。
+- 但当前 Epona nuPlan 配置的原生时间栅格是 5 Hz（`0.2, 0.4, ...`）。本次 8-step 输出覆盖 `0.2…1.6 s`，不是固定协议的 `0.5…4.0 s`，因此只能证明运行时可用，不能直接计入正式 CCFC/FCS。
+- 要进入正式池，必须生成原生 4 秒序列（约 20 帧）或提供经过审计的时间重采样；禁止把 `1.6 s` 输出重新标记成 `4.0 s`。
 
 ### DriveWAM
 
@@ -114,7 +115,7 @@ history + future front-camera frames
 
 ### WorldDrive / SimWAM
 
-- WorldDrive checkpoint 与代码已登记，尚未完成统一 runtime 验证。
+- WorldDrive checkpoint 与代码已登记，尚未完成统一 runtime 验证；在 Epona 的时间轴协议确认前，不把 WorldDrive 的不完整输出当作正式对照。
 - SimWAM 推理侧主要输出动作、不输出 future image，只能做 action-only 规划诊断。
 
 ## 5. 能力分层：覆盖多数 WAM
