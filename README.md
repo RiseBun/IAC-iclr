@@ -20,6 +20,9 @@ interpretation and stratification only.
 The converged method, data gates, 78-sample results, and GitHub-rendered flow
 chart are in [Continuous Foresight-Action Alignment V1](docs/CONTINUOUS_FORESIGHT_ALIGNMENT_V1_ZH.md).
 
+For the complete project status, evidence ledger, dataset state, WAM capability
+tiers, server artifacts, and next-step boundaries, see [Project Status 2026-08-31](docs/PROJECT_STATUS_20260831_ZH.md).
+
 The formal Level-2 WAM metric is [Continuous Counterfactual Foresight
 Consistency (CCFC) V1](docs/CONTINUOUS_COUNTERFACTUAL_CONSISTENCY_V1_ZH.md).
 It compares the risk-minus-clear `SE(2)` response of imagined future images
