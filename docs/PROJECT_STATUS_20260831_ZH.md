@@ -103,9 +103,9 @@ history + future front-camera frames
 ### Epona
 
 - 历史 generated compatibility `0.3279`，control compatibility `0.6352`。
-- 有控制入口。服务器已完成模型和 VAE 的单样本 runtime smoke：3 个 logged/left/right 分支均成功生成；进一步的 8-step smoke 也成功生成 3×8 张未来图像，`action_injection_verified=true`。
-- 但当前 Epona nuPlan 配置的原生时间栅格是 5 Hz（`0.2, 0.4, ...`）。本次 8-step 输出覆盖 `0.2…1.6 s`，不是固定协议的 `0.5…4.0 s`，因此只能证明运行时可用，不能直接计入正式 CCFC/FCS。
-- 要进入正式池，必须生成原生 4 秒序列（约 20 帧）或提供经过审计的时间重采样；禁止把 `1.6 s` 输出重新标记成 `4.0 s`。
+- 有控制入口。服务器已完成模型和 VAE 的单样本 runtime smoke：logged/left/right 分支均成功生成；8-step 与 20-step 均可运行，20-step 输出为 3×20 张未来图像并覆盖原生 `0.2…4.0 s`，`action_injection_verified=true`。
+- 当前 Epona nuPlan 配置的原生时间栅格是 5 Hz（`0.2, 0.4, ...`）。因此它已经具备真实 4 秒生成能力，但还没有直接对齐固定协议的 `0.5, 1.0, ..., 4.0 s` 采样点。
+- 要进入正式池，必须保留原生时间戳，并通过经过审计的时间重采样/连续运动解码映射到统一评分轴；禁止把 5 Hz 帧直接重命名成 0.5 秒帧。
 
 ### DriveWAM
 
