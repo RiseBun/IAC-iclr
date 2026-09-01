@@ -111,8 +111,9 @@ history + future front-camera frames
 ### DriveWAM
 
 - 具有最清晰的 NAVSIM action-conditioning adapter，协议上属于 `native_action_conditioned`。
-- 历史 intervention 显示 action-to-image 响应很弱，不能预先假设它是权威模型。
-- 服务器已有 NAVSIM checkpoint，但 Wan2.2 基座不完整，仍缺 VAE、tokenizer、text encoder 等组件，并缺少 `easydict` / `flash_attn` 运行依赖。
+- 已完成的旧实验是 `20 scenes × 3 branches` 外部动作注入，回答的是 `外部 action → pixel future`；该 checkpoint 的 action-to-image 响应较弱。它没有测量 `imagined future → native action`，不能作为本轮问题的重复结果。
+- 当前新增的候选实验利用 DriveWAM 原生推理顺序：先生成 future video 并写入 autoregressive cache，再采样 native action。只有这条路径才能回答 future 是否改变 action head。
+- NAVSIM checkpoint 已完整保留；torch attention 的可选 `flash-attn` 依赖已在评测入口加入 SDPA fallback。剩余依赖是 LingBot-VA base 的 `vae/tokenizer/text_encoder/transformer` 目录，正在 node3 独立存储盘续传，完成后先做单样本 smoke。
 
 ### WorldDrive
 
