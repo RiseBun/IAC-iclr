@@ -13,6 +13,38 @@ from PIL import Image
 from torch.utils.data import DataLoader
 
 
+def _install_flash_attention_import_fallback() -> bool:
+    """Make DriveWAM's optional flash-attn import harmless in torch mode.
+
+    DriveWAM imports ``flash_attn`` unconditionally even when the evaluator is
+    explicitly constructed with ``attn_mode='torch'``.  In that mode the model
+    uses its own SDPA implementation, so registering an equivalent import-only
+    fallback does not change the selected attention path or model weights.
+    """
+    try:
+        import flash_attn  # noqa: F401
+        return False
+    except ImportError:
+        import types
+        import importlib.machinery
+        import torch.nn.functional as F
+
+        def flash_attn_func(query, key, value, *args, **kwargs):
+            return F.scaled_dot_product_attention(
+                query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2)
+            ).transpose(1, 2)
+
+        module = types.ModuleType("flash_attn")
+        module.flash_attn_func = flash_attn_func
+        module.__spec__ = importlib.machinery.ModuleSpec("flash_attn", loader=None)
+        sys.modules["flash_attn"] = module
+        interface = types.ModuleType("flash_attn_interface")
+        interface.flash_attn_func = flash_attn_func
+        interface.__spec__ = importlib.machinery.ModuleSpec("flash_attn_interface", loader=None)
+        sys.modules["flash_attn_interface"] = interface
+        return True
+
+
 def _action_trajectory(batch_item, *, mode: str, expected_steps: int) -> torch.Tensor:
     """Build the explicit [T,3] pose condition used by the intervention probe."""
     values = []
@@ -68,6 +100,7 @@ def main():
     drivewam = os.environ.get("DRIVEWAM_ROOT", str(Path.cwd() / "third_party" / "DriveWAM"))
     tools = os.environ.get("IAC_TOOLS_ROOT", str(Path.cwd() / "tools"))
     iac_src = str(Path(__file__).resolve().parents[1] / "src")
+    flash_fallback = _install_flash_attention_import_fallback()
     sys.path.insert(0, tools)
     sys.path.insert(0, drivewam)
     sys.path.insert(0, os.path.join(drivewam, "src"))
@@ -151,6 +184,8 @@ def main():
         torch.cuda.empty_cache()
     (out / "manifest.json").write_text(json.dumps(rows, indent=2))
     print(json.dumps({"output": str(out), "num_samples": len(rows)}, indent=2))
+    if flash_fallback:
+        print(json.dumps({"attention_import_fallback": "torch_sdpa", "model_attn_mode": "torch"}))
 
 
 if __name__ == "__main__":
