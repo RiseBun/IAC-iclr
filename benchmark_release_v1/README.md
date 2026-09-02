@@ -1,5 +1,7 @@
 # IAC Benchmark · Level-1 Release v1
 
+中文文档：[README_zh.md](README_zh.md)
+
 IAC (Imagined-future and Action Consistency) is a reproducible benchmark for
 testing whether a WAM's imagined future is aligned with the action it emits.
 This release contains the **Level-1 continuous image-side measurement**: a
