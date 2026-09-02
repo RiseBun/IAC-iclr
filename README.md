@@ -1,5 +1,18 @@
 # IAC: Continuous Foresight-Action Evaluation for World Action Models
 
+## Current benchmark release
+
+The clean, reproducible Level-1 benchmark package is maintained in
+[`benchmark_release_v1/`](benchmark_release_v1/).
+
+- English: [`benchmark_release_v1/README.md`](benchmark_release_v1/README.md)
+- 中文：[`benchmark_release_v1/README_zh.md`](benchmark_release_v1/README_zh.md)
+- Frozen configuration: [`benchmark_release_v1/configs/plane.json`](benchmark_release_v1/configs/plane.json)
+
+It contains the audited public manifests, frozen RAFT-Large baseline, tests,
+protocol documents and runnable evaluation scripts. Historical research notes
+below are retained for provenance; they are not the release entry point.
+
 IAC asks a narrower and more causal question than video quality or task
 success alone:
 
