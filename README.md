@@ -14,6 +14,16 @@ curvature from an image sequence, then compares those signals with the WAM's
 future action/trajectory. It is a measurement layer, not a claim of causality
 by itself.
 
+## Submission scope
+
+The unified protocol evaluates WAMs that provide both **native action output**
+and a **future visual state**. The latter may be future RGB frames or a future
+latent that can be reconstructed to RGB with a fixed, checksummed decoder. Joint
+video-action generation, a shared head, semantic clear/risk interventions and
+video generation at deployment are not hard requirements. The required fields,
+lineage rules and intervention taxonomy are defined in
+[`docs/WAM_SCOPE_AND_UNIFIED_PROTOCOL_V1_ZH.md`](docs/WAM_SCOPE_AND_UNIFIED_PROTOCOL_V1_ZH.md).
+
 ## Method architecture: Step 1 → Step 3
 
 ```mermaid
@@ -205,15 +215,18 @@ python scripts/evaluate_continuous_motion_alignment.py \
 
 The report contains path-normalised lateral/heading/curvature errors,
 candidate-blind observability and coverage-risk. Speed is diagnostic only in
-v1; it is not a formal Step 1 score. CCFC and FCS are scorecard cells, not
-separate packages: they stay `ineligible` until a submission provides
-same-history semantic pairs and independent rollouts.
+v1; it is not a formal Step 1 score. CCFC accepts any reproducible paired
+intervention (for example left/right, slow/fast, command changes or latent
+swap) and reports the intervention type. FCS additionally requires an
+independent rollout and an explicit task-success label. Semantic clear/risk is
+valuable but optional; missing prerequisites remain `ineligible`, never zero.
 
 ## Submit a WAM
 
 Authors submit JSONL against `datasets/benchmark_v1_public.jsonl`. The schema,
-capability tiers and scorecard rules are in
-`docs/WAM_SUBMISSION_V1_ZH.md`. Validate locally with:
+legacy capability fields and scorecard rules are in
+`docs/WAM_SUBMISSION_V1_ZH.md`; the current visual-action admission protocol is
+in `docs/WAM_SCOPE_AND_UNIFIED_PROTOCOL_V1_ZH.md`. Validate locally with:
 
 ```bash
 python scripts/validate_wam_submission.py \

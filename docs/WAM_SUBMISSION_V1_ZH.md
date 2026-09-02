@@ -1,7 +1,31 @@
 # WAM 提交与分层记分板 v1
 
 本文件补全公开包里缺的「作者怎么交、我们怎么打分」。  
-Level-1 探针和 `benchmark_v1` split 不变。CCFC/FCS 仍可 `ineligible`，不得填 0。
+Step 1 探针和 `benchmark_v1` split 不变。新的统一准入是“future visual state +
+native action”；生成形式不设限，详见
+[`WAM_SCOPE_AND_UNIFIED_PROTOCOL_V1_ZH.md`](WAM_SCOPE_AND_UNIFIED_PROTOCOL_V1_ZH.md)。
+CCFC/FCS 在缺少对应证据时仍为 `ineligible`，不得填 0。
+
+## 0. 新提交的硬条件
+
+每个新提交必须同时提供：
+
+- 可复现的 native action；
+- future visual state：8 帧 RGB，或通过固定 decoder 重建出的 8 帧 RGB；
+- `history`、`condition/intervention`、精确时间戳、随机种子、model revision 和
+  lineage。
+
+若提交 future latent，还要提供 decoder revision、decoder checksum 和
+latent-to-frame 重建协议。联合生成、共享 action/video head、semantic clear/risk
+以及部署时是否默认生成视频都不是硬性条件。无法重建 RGB 的 latent 不能进入
+Step 1 RAFT 图像指标；只有 action 的模型不能进入本协议主格。
+
+当前 v1 脚本接口仍读取 `future_images` 路径。因此 latent 提交者应先用声明的
+decoder 和重建协议生成 8 个固定时间点的 RGB 文件，再在 JSONL 中填写这些路径，
+同时保留上述 decoder 元数据供审计；评测脚本不会偷偷替换 decoder。
+
+下表中的 `externally_controlled_video`、`video_only`、`action_only` 是冻结试点和
+历史审计用的兼容枚举，不代表新的主准入范围。
 
 ## 1. 作者提交什么
 

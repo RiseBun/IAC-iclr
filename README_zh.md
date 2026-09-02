@@ -12,6 +12,15 @@ IAC（Imagined-future and Action Consistency）是一个用于评测世界动作
 中提取前向/横向运动、航向和曲率，再与 WAM 的未来动作或轨迹进行比较。它是
 可靠的测量层，但单独不能宣称已经证明因果一致性。
 
+## 提交范围
+
+统一协议只评测同时提供 **native action（原生动作）** 和 **future visual state
+（未来视觉状态）** 的 WAM。未来视觉状态可以是未来 RGB 帧，也可以是能够通过
+固定且带 checksum 的 decoder 重建为 RGB 的 future latent。不要求视频与动作由同一
+个 head 联合生成，也不要求 semantic clear/risk 干预或部署时默认生成视频。必需
+字段、lineage 规则和干预类型见
+[`docs/WAM_SCOPE_AND_UNIFIED_PROTOCOL_V1_ZH.md`](docs/WAM_SCOPE_AND_UNIFIED_PROTOCOL_V1_ZH.md)。
+
 ## 方法架构：Step 1 → Step 3
 
 ```mermaid
@@ -187,13 +196,16 @@ python scripts/evaluate_continuous_motion_alignment.py \
 ```
 
 报告包括路径归一化后的横向、航向和曲率误差，候选盲可观测性以及 coverage-risk
-曲线。速度仅作诊断，在 v1 中不属于正式 Step 1 主指标。CCFC/FCS 是记分板格子，
-不是另一套包：没有语义双分支和独立 rollout 时必须标 `ineligible`，禁止填 0。
+曲线。速度仅作诊断，在 v1 中不属于正式 Step 1 主指标。CCFC 接受任意可重复的
+成对干预（如 left/right、slow/fast、command 变化或 latent swap），并报告干预
+类型。FCS 另需独立 rollout 和明确的任务成功标签。semantic clear/risk 很有价值但
+不是硬性条件；缺少前置条件时标记 `ineligible`，禁止填 0。
 
 ## 提交 WAM
 
-作者按 `datasets/benchmark_v1_public.jsonl` 的 `sample_id` 提交 JSONL。字段、
-能力层和记分规则见 `docs/WAM_SUBMISSION_V1_ZH.md`。
+作者按 `datasets/benchmark_v1_public.jsonl` 的 `sample_id` 提交 JSONL。旧版字段和
+记分规则见 `docs/WAM_SUBMISSION_V1_ZH.md`；当前视觉—动作准入协议见
+`docs/WAM_SCOPE_AND_UNIFIED_PROTOCOL_V1_ZH.md`。
 
 ```bash
 python scripts/validate_wam_submission.py \
@@ -203,7 +215,8 @@ python scripts/validate_wam_submission.py \
 python scripts/score_iac_submission.py --frozen-pilots --output scorecard.json
 ```
 
-官方试点记分板为 `datasets/scorecard_v1.json`。当前 CCFC/FCS 全部 ineligible。
+官方试点记分板为 `datasets/scorecard_v1.json`。当前试点中的 CCFC/FCS 结果仍按
+实际干预和 rollout 证据填写；没有前置条件的格子保持 `ineligible`。
 
 ## Step 1 综合指标
 
