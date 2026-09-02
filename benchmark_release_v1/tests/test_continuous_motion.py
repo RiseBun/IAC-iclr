@@ -46,7 +46,7 @@ class ContinuousMotionTest(unittest.TestCase):
         action = trajectory_to_motion_profile(value["trajectory"], times, initial_speed_mps=4.0)
         result = compare_motion_profiles(imagined, action)
         self.assertEqual(result["status"], "ok")
-        self.assertAlmostEqual(result["joint_error"], 0.0, places=6)
+        self.assertAlmostEqual(result["metrics"]["yaw_rate_radps"]["mae"], 0.0, places=6)
         self.assertEqual(result["coverage"], 1.0)
 
     def test_history_profile_is_past_only(self) -> None:
@@ -65,7 +65,7 @@ class ContinuousMotionTest(unittest.TestCase):
         action = trajectory_to_motion_profile(value["trajectory"], times, initial_speed_mps=4.0)
         result = compare_pose_profiles(imagined, action)
         self.assertEqual(result["status"], "ok")
-        self.assertIn("heading_cosine", result["metrics"])
+        self.assertIn("se2_pose", result["metrics"])
         self.assertGreaterEqual(result["coverage"], 0.0)
 
 
