@@ -14,34 +14,34 @@ curvature from an image sequence, then compares those signals with the WAM's
 future action/trajectory. It is a measurement layer, not a claim of causality
 by itself.
 
-## Method architecture: Level-1 → Level-3
+## Method architecture: Step 1 → Step 3
 
 ```mermaid
 flowchart LR
-    I["Input<br/>4 history frames + ego state<br/>WAM: 8 future frames / 4 s<br/>camera calibration"] --> A
-    subgraph S1["STEP 1 · Level-1 measurement"]
-        A["RAFT-Large + F/B consistency<br/>dynamic suppression + ground-plane ego geometry"]
-        N["Flow novelty<br/>not dense flow alone:<br/>ego geometry + candidate-blind + abstention<br/>RAFT=motion · UniDepth=scale · tracker=point association"]
-        O["Output m_F(t)<br/>lateral · yaw · curvature<br/>observability / coverage-risk"]
-        B["Evidence<br/>logged ego state + history/shuffle/reversal gates"]
+    I["输入<br/>4 帧历史图像 + 自车状态<br/>WAM：8 帧未来图像 / 4 秒<br/>相机标定"] --> A
+    subgraph S1["STEP 1 · 图像侧测量"]
+        A["RAFT-Large + 前后向一致性<br/>动态抑制 + 地面平面自车几何"]
+        N["光流 novelty<br/>不只是 dense flow：<br/>自车几何 + 候选盲 + abstention<br/>RAFT=位移 · UniDepth=尺度 · tracker=点关联"]
+        O["输出 m_F(t)<br/>横向运动 · yaw · 曲率<br/>可观测性 / coverage-risk"]
+        B["依据<br/>logged 自车状态 + history/shuffle/reversal 三门"]
         A --> O
         N -.-> A
         B -.-> O
     end
     O --> D
-    subgraph S2["STEP 2 · Level-2 CCFC"]
-        D["Paired clear/risk or left/right intervention<br/>same history + seed"]
-        C["Compare Δ imagined motion ↔ Δ native action"]
-        Q["Output CCFC<br/>direction · magnitude · time alignment · coverage"]
-        E["Evidence<br/>candidate-blind decode + native lineage<br/>identity/time-order controls"]
+    subgraph S2["STEP 2 · 反事实一致性 CCFC"]
+        D["成对 clear/risk 或 left/right 干预<br/>固定历史 + 随机种子"]
+        C["比较 Δ 想象运动 ↔ Δ 原生动作"]
+        Q["输出 CCFC<br/>方向 · 幅度 · 时间对齐 · 覆盖率"]
+        E["依据<br/>候选盲解码 + 原生 lineage<br/>identity/time-order 对照"]
         D --> C --> Q
         E -.-> Q
     end
     Q --> R
-    subgraph S3["STEP 3 · Level-3 FCS"]
-        R["Independent simulator rollout<br/>for every branch"]
-        T["Output realized ego state<br/>task score / task success → FCS"]
-        U["Evidence<br/>state is simulator-derived<br/>waypoint is never a realized-state proxy"]
+    subgraph S3["STEP 3 · 前瞻条件成功 FCS"]
+        R["独立模拟器闭环<br/>每条分支分别执行"]
+        T["输出实际自车状态<br/>task score / task success → FCS"]
+        U["依据<br/>状态必须来自模拟器<br/>waypoint 不能充当实际状态"]
         R --> T
         U -.-> T
     end
@@ -53,11 +53,11 @@ The levels are cumulative but answer different questions:
 
 | Level | Design intent | Evidence boundary |
 |---|---|---|
-| **Level-1** | Establish a trustworthy, candidate-blind ruler for future motion | Image-derived motion agrees with an independent logged reference; this validates measurement, not WAM causality |
-| **Level-2 / CCFC** | Test whether changing the imagined future changes the native action in the corresponding way | Compare `Δ imagined motion` with `Δ native action` under fixed history/seed; this is the foresight→action bridge, not task success |
-| **Level-3 / FCS** | Test whether that consistency survives execution in the environment | Add an independent rollout, realized state and explicit task-success label; this is the causal-closure layer |
+| **Step 1** | Establish a trustworthy, candidate-blind ruler for future motion | Image-derived motion agrees with an independent logged reference; this validates measurement, not WAM causality |
+| **Step 2 / CCFC** | Test whether changing the imagined future changes the native action in the corresponding way | Compare `Δ imagined motion` with `Δ native action` under fixed history/seed; this is the foresight→action bridge, not task success |
+| **Step 3 / FCS** | Test whether that consistency survives execution in the environment | Add an independent rollout, realized state and explicit task-success label; this is the causal-closure layer |
 
-### What Level-1 contains
+### What Step 1 contains
 
 For each 4-history/8-future, 4-second window, the frozen probe uses:
 
@@ -115,9 +115,9 @@ check on the imagined-future/action chain.
 .
 ├── configs/         frozen RAFT-Large ground-plane configuration
 ├── datasets/        public, path-sanitised benchmark/dev manifests and audits
-├── docs/            frozen benchmark protocol and Level-1 main table
+├── docs/            frozen benchmark protocol and Step 1 main table
 ├── scripts/         dataset builders, audits and scorers
-├── src/iac_new/     reusable Level-1 geometry, flow and scoring library
+├── src/iac_new/     reusable Step 1 geometry, flow and scoring library
 ├── tests/           deterministic unit and protocol tests
 ├── weights/         frozen RAFT-Large checkpoint + checksum
 ├── pyproject.toml
@@ -133,7 +133,7 @@ The role of each directory is fixed as follows:
 | `configs/` | Frozen image-side geometry configuration (`plane.json`) | Yes |
 | `datasets/` | Leakage-safe public manifests and split audits | Yes (metadata) |
 | `docs/` | Frozen protocol, dataset contract and main-table definitions | Yes (protocol) |
-| `scripts/` | Manifest builders, WAM-output audits and Level-1 scorers | Yes |
+| `scripts/` | Manifest builders, WAM-output audits and Step 1 scorers | Yes |
 | `src/iac_new/` | Reusable flow, geometry, posterior and scoring implementation | Yes |
 | `tests/` | Deterministic unit and protocol checks | Recommended |
 | `weights/` | Frozen RAFT-Large checkpoint, provenance and SHA-256 checksums | Yes for the default probe |
@@ -178,9 +178,9 @@ sha256sum -c weights/SHA256SUMS.txt
 
 The test suite is deterministic and covers calibration interfaces, temporal
 geometry, flow reliability, trajectory decoding, split isolation and the
-Level-1 continuous scorer.
+Step 1 continuous scorer.
 
-## Run the Level-1 measurement
+## Run Step 1 measurement
 
 On the evaluation server, first run the frozen image decoder on WAM-generated
 future-image records with `configs/plane.json`, producing a decoder-score JSONL.
@@ -205,7 +205,7 @@ python scripts/evaluate_continuous_motion_alignment.py \
 
 The report contains path-normalised lateral/heading/curvature errors,
 candidate-blind observability and coverage-risk. Speed is diagnostic only in
-v1; it is not a formal Level-1 score. CCFC and FCS are scorecard cells, not
+v1; it is not a formal Step 1 score. CCFC and FCS are scorecard cells, not
 separate packages: they stay `ineligible` until a submission provides
 same-history semantic pairs and independent rollouts.
 
@@ -227,7 +227,7 @@ The official v1 board (`datasets/scorecard_v1.json`) records WorldDrive,
 DriveWAM, Epona and DriveVA as pilots or ineligible cells. It does not invent
 CCFC numbers.
 
-## Level-1 metric summary
+## Step 1 metric summary
 
 The following is the **new frozen `benchmark_v1` experiment**, evaluated on
 580 records (500 NAVSIM + 80 Waymo), with strict shape gating and shape
@@ -245,7 +245,7 @@ validate the image measurement layer; they are not WAM causal scores.
 | Turn-layer curvature increment | **Gate passed** (106/114 evaluable) | Curvature uses the correct future and its temporal order |
 | Full-pool curvature increment | **Gate passed** | The curvature signal remains specific on the mixed benchmark pool |
 
-The formal Level-1 comparison therefore uses lateral motion, yaw rate and
+The formal Step 1 comparison therefore uses lateral motion, yaw rate and
 curvature. Absolute speed, acceleration and metric forward distance remain
 diagnostic only. The complete definitions, tolerances and bootstrap-gate
 wording are frozen in

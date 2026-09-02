@@ -12,12 +12,12 @@ IAC（Imagined-future and Action Consistency）是一个用于评测世界动作
 中提取前向/横向运动、航向和曲率，再与 WAM 的未来动作或轨迹进行比较。它是
 可靠的测量层，但单独不能宣称已经证明因果一致性。
 
-## 方法架构：Level-1 → Level-3
+## 方法架构：Step 1 → Step 3
 
 ```mermaid
 flowchart LR
     I["输入<br/>4 帧历史图像 + 自车状态<br/>WAM：8 帧未来图像 / 4 秒<br/>相机标定"] --> A
-    subgraph S1["STEP 1 · Level-1 测量"]
+    subgraph S1["STEP 1 · 图像侧测量"]
         A["RAFT-Large + 前后向一致性<br/>动态抑制 + 地面平面自车几何"]
         N["光流 novelty<br/>不只是 dense flow：<br/>自车几何 + 候选盲 + abstention<br/>RAFT=位移 · UniDepth=尺度 · tracker=点关联"]
         O["输出 m_F(t)<br/>横向运动 · yaw · 曲率<br/>可观测性 / coverage-risk"]
@@ -27,7 +27,7 @@ flowchart LR
         B -.-> O
     end
     O --> D
-    subgraph S2["STEP 2 · Level-2 CCFC"]
+    subgraph S2["STEP 2 · 反事实一致性 CCFC"]
         D["成对 clear/risk 或 left/right 干预<br/>固定历史 + 随机种子"]
         C["比较 Δ 想象运动 ↔ Δ 原生动作"]
         Q["输出 CCFC<br/>方向 · 幅度 · 时间对齐 · 覆盖率"]
@@ -36,7 +36,7 @@ flowchart LR
         E -.-> Q
     end
     Q --> R
-    subgraph S3["STEP 3 · Level-3 FCS"]
+    subgraph S3["STEP 3 · 前瞻条件成功 FCS"]
         R["独立模拟器闭环<br/>每条分支分别执行"]
         T["输出实际自车状态<br/>task score / task success → FCS"]
         U["依据<br/>状态必须来自模拟器<br/>waypoint 不能充当实际状态"]
@@ -51,11 +51,11 @@ flowchart LR
 
 | 层级 | 设计意图 | 证据边界 |
 |---|---|---|
-| **Level-1** | 建立可靠、候选盲的未来运动测量尺 | 图像测量与独立 logged 真值一致；验证测量器，不证明 WAM 因果性 |
-| **Level-2 / CCFC** | 检查想象未来变化是否带来相应的原生动作变化 | 固定历史/随机种子比较 `Δ 想象运动` 与 `Δ 原生动作`；这是前瞻→动作桥梁，不是任务成功率 |
-| **Level-3 / FCS** | 检查一致性在真实执行后是否仍然成立 | 加入独立 rollout、实际状态和任务成功标签；这是因果闭环层 |
+| **Step 1** | 建立可靠、候选盲的未来运动测量尺 | 图像测量与独立 logged 真值一致；验证测量器，不证明 WAM 因果性 |
+| **Step 2 / CCFC** | 检查想象未来变化是否带来相应的原生动作变化 | 固定历史/随机种子比较 `Δ 想象运动` 与 `Δ 原生动作`；这是前瞻→动作桥梁，不是任务成功率 |
+| **Step 3 / FCS** | 检查一致性在真实执行后是否仍然成立 | 加入独立 rollout、实际状态和任务成功标签；这是因果闭环层 |
 
-### Level-1 使用的技术
+### Step 1 使用的技术
 
 对每个“4 帧历史 + 8 帧未来、4 秒”的窗口，冻结探针执行：
 
@@ -109,9 +109,9 @@ CCFC    = consistency(ΔP_F, ΔP_A)
 .
 ├── configs/         冻结的 RAFT-Large 地面平面配置
 ├── datasets/        脱敏后的 benchmark/dev manifest 与审计文件
-├── docs/            冻结的 benchmark 协议与 Level-1 主表
+├── docs/            冻结的 benchmark 协议与 Step 1 主表
 ├── scripts/         数据集构建、审计和 scorer
-├── src/iac_new/     Level-1 几何、光流与评分库
+├── src/iac_new/     Step 1 几何、光流与评分库
 ├── tests/           确定性的单元测试与协议测试
 ├── weights/         冻结的 RAFT-Large 权重及校验和
 ├── pyproject.toml
@@ -127,7 +127,7 @@ CCFC    = consistency(ΔP_F, ΔP_A)
 | `configs/` | 冻结的图像侧几何配置（`plane.json`） | 是 |
 | `datasets/` | 无泄漏公开 manifest 与 split 审计文件 | 是（元数据） |
 | `docs/` | 冻结的评测协议、数据契约和主表定义 | 是（协议） |
-| `scripts/` | manifest 构建、WAM 输出审计和 Level-1 scorer | 是 |
+| `scripts/` | manifest 构建、WAM 输出审计和 Step 1 scorer | 是 |
 | `src/iac_new/` | 光流、几何、后验与评分的可复用实现 | 是 |
 | `tests/` | 确定性的单元测试与协议测试 | 建议运行 |
 | `weights/` | 冻结 RAFT-Large 权重、来源和 SHA-256 校验和 | 是（默认探针） |
@@ -162,10 +162,10 @@ PYTHONPATH=src:. python -m pytest tests -q
 sha256sum -c weights/SHA256SUMS.txt
 ```
 
-测试覆盖标定、时序几何、光流可靠性、轨迹解码、split 隔离以及 Level-1 连续
+测试覆盖标定、时序几何、光流可靠性、轨迹解码、split 隔离以及 Step 1 连续
 评分器。发布分支会在服务器环境中运行完整测试套件并记录结果。
 
-## 运行 Level-1 评测
+## 运行 Step 1 评测
 
 评测服务器上，先使用 `configs/plane.json` 对 WAM 生成的未来图像记录运行冻结的
 图像解码器，得到 decoder-score JSONL。公开 manifest 没有未来图像和未来参考状态，
@@ -187,7 +187,7 @@ python scripts/evaluate_continuous_motion_alignment.py \
 ```
 
 报告包括路径归一化后的横向、航向和曲率误差，候选盲可观测性以及 coverage-risk
-曲线。速度仅作诊断，在 v1 中不属于正式 Level-1 主指标。CCFC/FCS 是记分板格子，
+曲线。速度仅作诊断，在 v1 中不属于正式 Step 1 主指标。CCFC/FCS 是记分板格子，
 不是另一套包：没有语义双分支和独立 rollout 时必须标 `ineligible`，禁止填 0。
 
 ## 提交 WAM
@@ -205,7 +205,7 @@ python scripts/score_iac_submission.py --frozen-pilots --output scorecard.json
 
 官方试点记分板为 `datasets/scorecard_v1.json`。当前 CCFC/FCS 全部 ineligible。
 
-## Level-1 综合指标
+## Step 1 综合指标
 
 下面是**新冻结的 `benchmark_v1` 实验结果**：共 580 条记录（NAVSIM 500 +
 Waymo 80），使用严格形状门并关闭 shape fallback。参考值来自 logged future
@@ -222,7 +222,7 @@ ego state，因此这些数字验证的是图像测量层，不是 WAM 因果分
 | 转弯层 curvature 增量 | **通过**（106/114 可评） | 曲率依赖正确 future 及其时间顺序 |
 | 全池 curvature 增量 | **通过** | 混合 benchmark 上仍保持增量特异性 |
 
-因此，正式 Level-1 比较使用 lateral motion、yaw rate 和 curvature。绝对速度、
+因此，正式 Step 1 比较使用 lateral motion、yaw rate 和 curvature。绝对速度、
 加速度以及米制前向距离仍只作诊断。完整定义、容差和 bootstrap gate 见
 [`docs/LEVEL1_MAIN_TABLE_BENCHMARK_V1_ZH.md`](docs/LEVEL1_MAIN_TABLE_BENCHMARK_V1_ZH.md)。
 
