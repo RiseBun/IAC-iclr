@@ -1,0 +1,39 @@
+{
+  "image": {"width": 512, "height": 288},
+  "geometry": {
+    "backend": "cached_metric_depth",
+    "min_depth_m": 1.0,
+    "max_depth_m": 100.0,
+    "confidence_quantile": 0.25,
+    "observed_flow_quantile": 0.997
+  },
+  "flow": {
+    "model": "large",
+    "updates": 32,
+    "batch_size": 4,
+    "forward_backward": true,
+    "fb_abs_threshold_px": 1.5,
+    "fb_relative_threshold": 0.05
+  },
+  "mask": {
+    "polygon_normalized": [[0.08, 0.98], [0.92, 0.98], [0.63, 0.53], [0.37, 0.53]],
+    "min_valid_pixels": 1500
+  },
+  "perception": {"backend": "none"},
+  "score": {"minimum_flow_scale_px": 1.0},
+  "continuous_decoder": {
+    "max_points": 900,
+    "max_iterations": 12,
+    "initial_speeds_mps": [3.0, 6.0, 10.0],
+    "profile_radius": 0.12,
+    "lateral_tolerance_m": 0.50,
+    "yaw_tolerance_rad": 0.10,
+    "speed_relative_tolerance": 0.20,
+    "curvature_tolerance_1pm": 0.06,
+    "score_speed": false,
+    "min_effective_pixel_fraction": 0.02,
+    "speed_abstain_observability": 0.25,
+    "speed_uncertain_observability": 0.55,
+    "curvature_multistart": false
+  }
+}
