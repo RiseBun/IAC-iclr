@@ -1,0 +1,28 @@
+flowchart LR
+    I[Input<br/>4 history frames + ego state<br/>WAM: 8 future frames / 4 s<br/>camera calibration] --> A
+    subgraph S1[STEP 1 · Level-1 measurement]
+        A[RAFT-Large + F/B consistency<br/>dynamic suppression + ground-plane ego geometry]
+        N[Flow novelty<br/>not dense flow alone:<br/>ego geometry + candidate-blind + abstention<br/>RAFT=motion · UniDepth=scale · tracker=point association]
+        O[Output m_F(t)<br/>lateral · yaw · curvature<br/>observability / coverage-risk]
+        B[Evidence<br/>logged ego state + history/shuffle/reversal gates]
+        A --> O
+        N -.-> A
+        B -.-> O
+    end
+    O --> D
+    subgraph S2[STEP 2 · Level-2 CCFC]
+        D[Paired clear/risk or left/right intervention<br/>same history + seed]
+        C[Compare Δ imagined motion ↔ Δ native action]
+        Q[Output CCFC<br/>direction · magnitude · time alignment · coverage]
+        E[Evidence<br/>candidate-blind decode + native lineage<br/>identity/time-order controls]
+        D --> C --> Q
+        E -.-> Q
+    end
+    Q --> R
+    subgraph S3[STEP 3 · Level-3 FCS]
+        R[Independent simulator rollout<br/>for every branch]
+        T[Output realized ego state<br/>task score / task success → FCS]
+        U[Evidence<br/>state is simulator-derived<br/>waypoint is never a realized-state proxy]
+        R --> T
+        U -.-> T
+    end

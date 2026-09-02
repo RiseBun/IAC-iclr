@@ -15,16 +15,37 @@ IAC（Imagined-future and Action Consistency）是一个用于评测世界动作
 ## 方法架构：Level-1 → Level-3
 
 ```mermaid
-flowchart TD
-    H[历史图像 + 自车状态] --> W[WAM 生成想象未来图像]
-    W --> L1[Level-1 图像侧探针]
-    L1 --> P[连续运动画像<br/>横向运动 · yaw rate · 曲率]
-    P --> C[与原生 action 比较]
-    C --> L2[Level-2 CCFC<br/>反事实前瞻一致性]
-    L2 --> R[独立模拟器闭环]
-    R --> S[实际自车状态 + 任务成功]
-    S --> L3[Level-3 FCS<br/>前瞻条件成功]
+flowchart LR
+    I[输入<br/>4 帧历史图像 + 自车状态<br/>WAM：8 帧未来图像 / 4 秒<br/>相机标定] --> A
+    subgraph S1[STEP 1 · Level-1 测量]
+        A[RAFT-Large + 前后向一致性<br/>动态抑制 + 地面平面自车几何]
+        N[光流 novelty<br/>不只是 dense flow：<br/>自车几何 + 候选盲 + abstention<br/>RAFT=位移 · UniDepth=尺度 · tracker=点关联]
+        O[输出 m_F(t)<br/>横向运动 · yaw · 曲率<br/>可观测性 / coverage-risk]
+        B[依据<br/>logged 自车状态 + history/shuffle/reversal 三门]
+        A --> O
+        N -.-> A
+        B -.-> O
+    end
+    O --> D
+    subgraph S2[STEP 2 · Level-2 CCFC]
+        D[成对 clear/risk 或 left/right 干预<br/>固定历史 + 随机种子]
+        C[比较 Δ 想象运动 ↔ Δ 原生动作]
+        Q[输出 CCFC<br/>方向 · 幅度 · 时间对齐 · 覆盖率]
+        E[依据<br/>候选盲解码 + 原生 lineage<br/>identity/time-order 对照]
+        D --> C --> Q
+        E -.-> Q
+    end
+    Q --> R
+    subgraph S3[STEP 3 · Level-3 FCS]
+        R[独立模拟器闭环<br/>每条分支分别执行]
+        T[输出实际自车状态<br/>task score / task success → FCS]
+        U[依据<br/>状态必须来自模拟器<br/>waypoint 不能充当实际状态]
+        R --> T
+        U -.-> T
+    end
 ```
+
+可编辑的流程图源文件：[`docs/IAC_FROZEN_PIPELINE_V1.mmd`](docs/IAC_FROZEN_PIPELINE_V1.mmd)。
 
 三层是递进关系，但回答的问题不同：
 

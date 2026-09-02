@@ -17,16 +17,37 @@ by itself.
 ## Method architecture: Level-1 → Level-3
 
 ```mermaid
-flowchart TD
-    H[History images + ego state] --> W[WAM generates imagined future images]
-    W --> L1[Level-1 image-side probe]
-    L1 --> P[Continuous motion profile<br/>lateral motion · yaw rate · curvature]
-    P --> C[Compare with native action]
-    C --> L2[Level-2 CCFC<br/>counterfactual foresight consistency]
-    L2 --> R[Independent simulator rollout]
-    R --> S[Realized ego state + task success]
-    S --> L3[Level-3 FCS<br/>foresight-conditioned success]
+flowchart LR
+    I[Input<br/>4 history frames + ego state<br/>WAM: 8 future frames / 4 s<br/>camera calibration] --> A
+    subgraph S1[STEP 1 · Level-1 measurement]
+        A[RAFT-Large + F/B consistency<br/>dynamic suppression + ground-plane ego geometry]
+        N[Flow novelty<br/>not dense flow alone:<br/>ego geometry + candidate-blind + abstention<br/>RAFT=motion · UniDepth=scale · tracker=point association]
+        O[Output m_F(t)<br/>lateral · yaw · curvature<br/>observability / coverage-risk]
+        B[Evidence<br/>logged ego state + history/shuffle/reversal gates]
+        A --> O
+        N -.-> A
+        B -.-> O
+    end
+    O --> D
+    subgraph S2[STEP 2 · Level-2 CCFC]
+        D[Paired clear/risk or left/right intervention<br/>same history + seed]
+        C[Compare Δ imagined motion ↔ Δ native action]
+        Q[Output CCFC<br/>direction · magnitude · time alignment · coverage]
+        E[Evidence<br/>candidate-blind decode + native lineage<br/>identity/time-order controls]
+        D --> C --> Q
+        E -.-> Q
+    end
+    Q --> R
+    subgraph S3[STEP 3 · Level-3 FCS]
+        R[Independent simulator rollout<br/>for every branch]
+        T[Output realized ego state<br/>task score / task success → FCS]
+        U[Evidence<br/>state is simulator-derived<br/>waypoint is never a realized-state proxy]
+        R --> T
+        U -.-> T
+    end
 ```
+
+Editable diagram source: [`docs/IAC_FROZEN_PIPELINE_V1.mmd`](docs/IAC_FROZEN_PIPELINE_V1.mmd).
 
 The levels are cumulative but answer different questions:
 
