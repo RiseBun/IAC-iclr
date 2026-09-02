@@ -14,15 +14,17 @@ by itself.
 
 ```text
 benchmark_release_v1/
+├── configs/         frozen RAFT-Large ground-plane configuration
 ├── datasets/       public, path-sanitised benchmark/dev manifests and audits
-├── docs/            protocol and causal-evaluation design notes
-├── scripts/         dataset builders, audits, calibration and scorers
+├── docs/            frozen benchmark protocol and Level-1 main table
+├── scripts/         dataset builders, audits and scorers
 ├── src/iac_new/     reusable Level-1 geometry, flow and scoring library
 ├── tests/           deterministic unit and protocol tests
-├── weights/         RAFT-Large and SEA-RAFT checkpoints + checksums
+├── weights/         frozen RAFT-Large checkpoint + checksum
 ├── pyproject.toml
 ├── VERSION
-└── README.md
+├── README.md
+└── README_zh.md
 ```
 
 Raw NAVSIM/Waymo frames, private absolute paths, WAM checkpoints and generated
@@ -32,7 +34,10 @@ and keeps the GitHub package portable.
 
 ## Frozen protocol
 
-- Four history frames (`t <= 0`) and eight future frames at `0.5, …, 4.0 s`.
+- The private evaluation input contains four history frames (`t <= 0`) and
+  eight future frames at `0.5, …, 4.0 s`. The public manifests in this
+  repository do **not** contain future images; they contain only protocol
+  metadata and sanitised sample identity.
 - Exact timestamps, camera intrinsics/extrinsics and distortion are required.
 - Scene/log groups are disjoint between benchmark and dev; split construction
   is deterministic and audited.
@@ -55,42 +60,38 @@ PYTHONPATH=src:. python -m pytest tests -q
 sha256sum -c weights/SHA256SUMS.txt
 ```
 
-The test suite is deterministic and covers calibration, temporal geometry,
-flow reliability, trajectory decoding, split isolation and the Level-1
-continuous scorer.
+The test suite is deterministic and covers calibration interfaces, temporal
+geometry, flow reliability, trajectory decoding, split isolation and the
+Level-1 continuous scorer.
 
 ## Run the Level-1 measurement
 
-Prepare a WAM output JSONL with one record per sample. The action/trajectory
-fields are read only at the final comparison stage; they must not be passed to
-the image-side decoder. Then run:
+On the evaluation server, first run the frozen image decoder on WAM-generated
+future-image records with `configs/plane.json`, producing a decoder-score JSONL.
+The public manifests alone cannot be scored because their future images and
+future reference states remain private. Action/trajectory fields are read only
+at the final comparison stage and must not be passed to the image-side decoder.
 
 ```bash
-python scripts/audit_wam_level1_outputs.py --input <wam_outputs.jsonl>
+python scripts/audit_wam_level1_outputs.py --generated <wam_generated_records.jsonl> \
+  --output <wam_output_audit.json>
+python scripts/evaluate_continuous_decoder.py \
+  --manifest <private_wam_generated_records.jsonl> \
+  --config configs/plane.json \
+  --output <decoder_scores.jsonl>
 python scripts/evaluate_continuous_motion_alignment.py \
-  --manifest datasets/benchmark_v1_public.jsonl \
-  --wam-output <wam_outputs.jsonl> \
+  --manifest <private_evaluation_manifest.jsonl> \
+  --scores <decoder_scores.jsonl> \
+  --reference-source action \
+  --require-eight-frame-four-second \
   --output <out_dir>
 ```
 
 The report contains path-normalised lateral/heading/curvature errors,
-candidate-blind observability and coverage-risk, plus optional longitudinal
-residuals. Speed is diagnostic only in v1; it is not a formal Level-1 score.
-
-For a causal follow-up, use the counterfactual protocol after the native-output
-audit:
-
-```bash
-python scripts/evaluate_counterfactual_continuous_alignment.py \
-  --manifest datasets/benchmark_v1_public.jsonl \
-  --wam-output <wam_outputs.jsonl> \
-  --output <cf_dir>
-```
-
-`causal_claim_allowed=false` for native future images. A causal claim requires
-an independently generated action/future pair and a successful identity/order
-counterfactual control; Level-1 alone does not establish Foresight-Conditioned
-Success or Counterfactual Consistency.
+candidate-blind observability and coverage-risk. Speed is diagnostic only in
+v1; it is not a formal Level-1 score. This release does not claim CCFC or FCS:
+those require a separate paired WAM intervention package with generated future
+images and are outside the public v1 protocol.
 
 ## Dataset preparation
 
@@ -98,8 +99,8 @@ Use `scripts/build_level1_benchmark_v1.py` to construct deterministic splits
 from private NAVSIM/Waymo records. `scripts/prepare_waymo_level1_samples.py`
 converts Waymo Perception v2 shards to the 4+8-frame interface, and
 `scripts/build_public_benchmark_manifest.py` creates a leakage-safe public
-manifest. See `docs/CONTINUOUS_FORESIGHT_ALIGNMENT_V1_ZH.md` for the full
-protocol and `docs/IAC_EVENT_CAUSAL_ARCHITECTURE.md` for the causal extension.
+manifest. See `docs/BENCHMARK_DATASET_V1_ZH.md` for the data protocol and
+`docs/LEVEL1_MAIN_TABLE_BENCHMARK_V1_ZH.md` for the frozen main table.
 
 ## Data and license
 

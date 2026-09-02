@@ -13,12 +13,13 @@ IAC（Imagined-future and Action Consistency）是一个用于评测世界动作
 
 ```text
 benchmark_release_v1/
+├── configs/         冻结的 RAFT-Large 地面平面配置
 ├── datasets/       脱敏后的 benchmark/dev manifest 与审计文件
-├── docs/            评测协议与因果评测设计
-├── scripts/         数据集构建、审计、标定和 scorer
+├── docs/            冻结的 benchmark 协议与 Level-1 主表
+├── scripts/         数据集构建、审计和 scorer
 ├── src/iac_new/     Level-1 几何、光流与评分库
 ├── tests/           确定性的单元测试与协议测试
-├── weights/         RAFT-Large、SEA-RAFT 权重及校验和
+├── weights/         冻结的 RAFT-Large 权重及校验和
 ├── pyproject.toml
 ├── VERSION
 ├── README.md        English documentation
@@ -31,7 +32,8 @@ benchmark_release_v1/
 
 ## 固定评测协议
 
-- 每个样本包含 4 帧历史图像（`t <= 0`）和 8 帧未来图像。
+- 评测服务器上的私有输入包含 4 帧历史图像（`t <= 0`）和 8 帧未来图像。
+  本公开包中的 manifest **不包含未来图像**，只包含协议元数据和脱敏后的样本身份。
 - 未来帧时间为 `0.5, 1.0, ..., 4.0 s`，必须保留精确时间戳。
 - 必须提供相机内参、外参和畸变参数。
 - benchmark 与 dev 按 scene/log group 隔离，构建过程确定性且有审计文件。
@@ -51,37 +53,32 @@ sha256sum -c weights/SHA256SUMS.txt
 ```
 
 测试覆盖标定、时序几何、光流可靠性、轨迹解码、split 隔离以及 Level-1 连续
-评分器。服务器当前验证结果为 `75 passed`。
+评分器。发布分支会在服务器环境中运行完整测试套件并记录结果。
 
 ## 运行 Level-1 评测
 
-首先准备 WAM 输出 JSONL，每个样本一条记录。动作或轨迹字段只能在最后的比较
-阶段读取，不能输入图像侧解码器，否则会产生评测泄漏。
+评测服务器上，先使用 `configs/plane.json` 对 WAM 生成的未来图像记录运行冻结的
+图像解码器，得到 decoder-score JSONL。公开 manifest 没有未来图像和未来参考状态，
+不能单独完成评分。动作或轨迹字段只能在最后的比较阶段读取，不能输入图像侧解码器。
 
 ```bash
-python scripts/audit_wam_level1_outputs.py --input <wam_outputs.jsonl>
+python scripts/audit_wam_level1_outputs.py --generated <wam_generated_records.jsonl> \
+  --output <wam_output_audit.json>
+python scripts/evaluate_continuous_decoder.py \
+  --manifest <private_wam_generated_records.jsonl> \
+  --config configs/plane.json \
+  --output <decoder_scores.jsonl>
 python scripts/evaluate_continuous_motion_alignment.py \
-  --manifest datasets/benchmark_v1_public.jsonl \
-  --wam-output <wam_outputs.jsonl> \
+  --manifest <private_evaluation_manifest.jsonl> \
+  --scores <decoder_scores.jsonl> \
+  --reference-source action \
+  --require-eight-frame-four-second \
   --output <out_dir>
 ```
 
-报告包括路径归一化后的横向、航向和曲率误差，候选盲可观测性以及
-coverage-risk 曲线。纵向残差可以作为辅助诊断，但在 v1 中不属于正式 Level-1
-主指标。
-
-如果需要继续进行因果验证，可运行反事实协议：
-
-```bash
-python scripts/evaluate_counterfactual_continuous_alignment.py \
-  --manifest datasets/benchmark_v1_public.jsonl \
-  --wam-output <wam_outputs.jsonl> \
-  --output <cf_dir>
-```
-
-对于原生 future image，`causal_claim_allowed=false`。只有在独立生成 action/future
-配对，并通过 identity/order 反事实控制后，才可以讨论因果一致性。Level-1 本身
-不能直接等同于 Foresight-Conditioned Success 或 Counterfactual Consistency。
+报告包括路径归一化后的横向、航向和曲率误差，候选盲可观测性以及 coverage-risk
+曲线。速度仅作诊断，在 v1 中不属于正式 Level-1 主指标。本发布版不宣称 CCFC 或
+FCS；它们需要单独的、包含成对 WAM 干预和生成未来图像的评测包，不属于公开 v1 协议。
 
 ## 数据准备
 
@@ -90,8 +87,8 @@ python scripts/evaluate_counterfactual_continuous_alignment.py \
 shard 转换为 4+8 帧接口；使用 `scripts/build_public_benchmark_manifest.py`
 生成无泄漏的公开 manifest。
 
-完整协议见 `docs/CONTINUOUS_FORESIGHT_ALIGNMENT_V1_ZH.md`，因果扩展见
-`docs/IAC_EVENT_CAUSAL_ARCHITECTURE.md`。
+数据协议见 `docs/BENCHMARK_DATASET_V1_ZH.md`，冻结主表见
+`docs/LEVEL1_MAIN_TABLE_BENCHMARK_V1_ZH.md`。
 
 ## 数据与许可证
 

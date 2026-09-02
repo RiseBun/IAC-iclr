@@ -14,7 +14,6 @@ import numpy as np
 from iac_new.depth import load_cached_metric_depth, metric_depth_reliability_masks
 from iac_new.dino_features import DINOv2TemporalConsistency
 from iac_new.flow import RaftFlowExtractor
-from iac_new.sea_raft_flow import SeaRaftFlowExtractor
 from iac_new.perception import build_perception, temporal_road_consensus
 from iac_new.protocol import read_jsonl, validate_record, write_jsonl
 from iac_new.road_relative import road_relative_posterior
@@ -736,20 +735,22 @@ def main() -> None:
         raw_rows = raw_rows[: args.max_samples]
     records = [validate_record(row, manifest_root=args.manifest.parent) for row in raw_rows]
     flow_cfg = config["flow"]
-    if str(flow_cfg.get("backend", "torchvision_raft")) == "sea_raft":
-        extractor = SeaRaftFlowExtractor(
-            checkpoint=str(flow_cfg["checkpoint"]),
-            device=args.device,
-            iters=int(flow_cfg.get("iters", 12)),
-        )
-    else:
-        extractor = RaftFlowExtractor(
-            model_size=str(flow_cfg["model"]), device=args.device,
-            updates=int(flow_cfg["updates"]), batch_size=int(flow_cfg["batch_size"]),
-            forward_backward=bool(flow_cfg["forward_backward"]),
-            fb_abs_threshold_px=float(flow_cfg["fb_abs_threshold_px"]),
-            fb_relative_threshold=float(flow_cfg["fb_relative_threshold"]),
-        )
+    if str(flow_cfg.get("backend", "torchvision_raft")) != "torchvision_raft":
+        raise ValueError("benchmark_release_v1 freezes the torchvision RAFT-Large backend")
+    checkpoint = flow_cfg.get("checkpoint")
+    if checkpoint:
+        checkpoint_path = Path(str(checkpoint))
+        if not checkpoint_path.is_absolute():
+            checkpoint_path = args.config.parent.parent / checkpoint_path
+        checkpoint = str(checkpoint_path)
+    extractor = RaftFlowExtractor(
+        model_size=str(flow_cfg["model"]), device=args.device,
+        updates=int(flow_cfg["updates"]), batch_size=int(flow_cfg["batch_size"]),
+        forward_backward=bool(flow_cfg["forward_backward"]),
+        fb_abs_threshold_px=float(flow_cfg["fb_abs_threshold_px"]),
+        fb_relative_threshold=float(flow_cfg["fb_relative_threshold"]),
+        checkpoint=checkpoint,
+    )
     perception = build_perception(config, device=args.device)
     dino = None
     dino_cfg = config.get("dino", {})
