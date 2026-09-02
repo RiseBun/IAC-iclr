@@ -1,27 +1,10 @@
 #!/usr/bin/env python3
-"""Materialize continuous Waymo camera/pose data into the IAC Level-1 protocol.
+"""Materialize Waymo Perception v2 camera/state windows for IAC Level-1.
 
-The Waymo modular Perception v2 export is sampled at 10 Hz.  This converter
-keeps one front-camera JPEG per source timestamp and creates non-overlapping
-or sliding 4 s samples with four 0.5 s history frames and eight 0.5 s future
-frames.  No TensorFlow/Waymo runtime is required; only pyarrow is needed.
-
-Input layout (one or more segment parquet files per component)::
-
-  <input>/camera_image/<segment>.parquet
-  <input>/camera_calibration/<segment>.parquet
-  <input>/vehicle_pose/<segment>.parquet
-
-Output layout::
-
-  <output>/frames/<segment>/front/<timestamp>.jpg
-  <output>/camera/<segment>.json
-  <output>/manifest.jsonl
-
-The manifest stores canonical relative ego states
-``[x_m, y_m, yaw_rad, speed_mps, yaw_rate_rps]`` in the anchor vehicle frame.
-It is deliberately independent of E2E labels; E2E scenario tags can be joined
-later by an explicit segment/timestamp mapping when such a mapping exists.
+The exporter samples native 10 Hz FRONT-camera sequences every five frames:
+4 history points at -1.5,-1.0,-0.5,0 and 8 future points at 0.5,...,4.0 s.
+Windows are non-overlapping within a segment by default, so a later selector
+can safely split them by segment without leakage.
 """
 
 from __future__ import annotations
@@ -36,180 +19,148 @@ import numpy as np
 import pyarrow.parquet as pq
 
 
-IMG_TS = "key.frame_timestamp_micros"
-CAM = "key.camera_name"
-IMG = "[CameraImageComponent].image"
-VX = "[CameraImageComponent].velocity.linear_velocity.x"
-VY = "[CameraImageComponent].velocity.linear_velocity.y"
-WZ = "[CameraImageComponent].velocity.angular_velocity.z"
-POSE = "[VehiclePoseComponent].world_from_vehicle.transform"
+FRONT = 1
+STEP = 5
+HISTORY = 4
+FUTURE = 8
+WINDOW = (HISTORY + FUTURE - 1) * STEP + 1
 
 
-def _yaw(transform: Any) -> float:
-    m = np.asarray(transform, dtype=np.float64).reshape(4, 4)
-    return float(math.atan2(m[1, 0], m[0, 0]))
+def _col(table: Any, name: str) -> list[Any]:
+    return table[name].to_pylist()
 
 
-def _relative_states(rows: list[dict[str, Any]], anchor: int) -> list[list[float]]:
-    a = rows[anchor]
-    ax, ay, ayaw = float(a["x"]), float(a["y"]), float(a["yaw"])
-    c, s = math.cos(ayaw), math.sin(ayaw)
-    out: list[list[float]] = []
-    for row in rows:
-        dx, dy = float(row["x"]) - ax, float(row["y"]) - ay
-        # world -> anchor vehicle frame: +x forward, +y left
-        x = c * dx + s * dy
-        y = -s * dx + c * dy
-        yaw = math.atan2(math.sin(float(row["yaw"]) - ayaw), math.cos(float(row["yaw"]) - ayaw))
-        out.append([x, y, yaw, float(row["speed"]), float(row["yaw_rate"])])
-    return out
+def _yaw(matrix: np.ndarray) -> float:
+    return float(math.atan2(matrix[1, 0], matrix[0, 0]))
 
 
-def _load_segment(image_path: Path, pose_path: Path, camera: int) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
-    image_cols = [IMG_TS, CAM, IMG, VX, VY, WZ]
-    image = pq.read_table(image_path, columns=image_cols).to_pydict()
-    timestamps = image[IMG_TS]
-    front: dict[int, dict[str, Any]] = {}
-    for i, cam in enumerate(image[CAM]):
-        if int(cam) != camera:
-            continue
-        ts = int(timestamps[i])
-        vx = float(image[VX][i] or 0.0)
-        vy = float(image[VY][i] or 0.0)
-        front[ts] = {
-            "timestamp_micros": ts,
-            "image": bytes(image[IMG][i]),
-            "speed": math.hypot(vx, vy),
-            "yaw_rate": float(image[WZ][i] or 0.0),
-        }
-    if not front:
-        raise ValueError(f"no camera {camera} rows in {image_path}")
+def _wrap(angle: float) -> float:
+    return float((angle + math.pi) % (2 * math.pi) - math.pi)
 
-    pose = pq.read_table(pose_path, columns=[IMG_TS, POSE]).to_pydict()
-    pose_by_ts = {
-        int(ts): (float(np.asarray(tf).reshape(4, 4)[0, 3]), float(np.asarray(tf).reshape(4, 4)[1, 3]), _yaw(tf))
-        for ts, tf in zip(pose[IMG_TS], pose[POSE])
-    }
+
+def _calibration(path: Path) -> dict[str, Any]:
+    table = pq.read_table(path)
+    names = _col(table, "key.camera_name")
+    idx = next((i for i, n in enumerate(names) if int(n) == FRONT), 0)
+    p = "[CameraCalibrationComponent]"
+    transform = np.asarray(_col(table, f"{p}.extrinsic.transform")[idx], dtype=np.float64).reshape(4, 4)
+    intrinsics = [[float(_col(table, f"{p}.intrinsic.f_u")[idx]), 0.0, float(_col(table, f"{p}.intrinsic.c_u")[idx])],
+                  [0.0, float(_col(table, f"{p}.intrinsic.f_v")[idx]), float(_col(table, f"{p}.intrinsic.c_v")[idx])],
+                  [0.0, 0.0, 1.0]]
+    distortion = [float(_col(table, f"{p}.intrinsic.{k}")[idx]) for k in ("k1", "k2", "p1", "p2", "k3")]
+    return {"intrinsics": intrinsics, "distortion": distortion, "camera_to_ego": transform.tolist()}
+
+
+def _read_segment(image_path: Path, pose_path: Path) -> list[dict[str, Any]]:
+    image_table = pq.read_table(image_path)
+    pose_table = pq.read_table(pose_path)
+    image_ts = _col(image_table, "key.frame_timestamp_micros")
+    image_camera = _col(image_table, "key.camera_name")
+    image_bytes = _col(image_table, "[CameraImageComponent].image")
+    image_vel = [
+        _col(image_table, "[CameraImageComponent].velocity.linear_velocity.x"),
+        _col(image_table, "[CameraImageComponent].velocity.linear_velocity.y"),
+        _col(image_table, "[CameraImageComponent].velocity.linear_velocity.z"),
+    ]
+    pose_ts = _col(pose_table, "key.frame_timestamp_micros")
+    pose_values = _col(pose_table, "[VehiclePoseComponent].world_from_vehicle.transform")
+    pose_by_ts = {int(t): np.asarray(v, dtype=np.float64).reshape(4, 4) for t, v in zip(pose_ts, pose_values)}
     rows = []
-    for ts in sorted(front):
-        if ts not in pose_by_ts:
+    for i, (ts, camera, blob) in enumerate(zip(image_ts, image_camera, image_bytes)):
+        if int(camera) != FRONT or int(ts) not in pose_by_ts:
             continue
-        x, y, yaw = pose_by_ts[ts]
-        rows.append({**front[ts], "x": x, "y": y, "yaw": yaw})
-    if len(rows) < 50:
-        raise ValueError(f"{image_path.name}: only {len(rows)} usable front frames")
+        rows.append({"timestamp": int(ts), "image": bytes(blob), "pose": pose_by_ts[int(ts)], "velocity": [float(v[i]) for v in image_vel]})
+    rows.sort(key=lambda r: r["timestamp"])
+    return rows
 
-    cal = {}
-    cal_path = image_path.parent.parent / "camera_calibration" / image_path.name
-    if cal_path.exists():
-        ctab = pq.read_table(cal_path).to_pydict()
-        for i, cam in enumerate(ctab[CAM]):
-            if int(cam) != camera:
-                continue
-            cal = {
-                "camera_name": int(cam),
-                "intrinsics": {
-                    "f_u": float(ctab["[CameraCalibrationComponent].intrinsic.f_u"][i]),
-                    "f_v": float(ctab["[CameraCalibrationComponent].intrinsic.f_v"][i]),
-                    "c_u": float(ctab["[CameraCalibrationComponent].intrinsic.c_u"][i]),
-                    "c_v": float(ctab["[CameraCalibrationComponent].intrinsic.c_v"][i]),
-                    "k1": float(ctab["[CameraCalibrationComponent].intrinsic.k1"][i]),
-                    "k2": float(ctab["[CameraCalibrationComponent].intrinsic.k2"][i]),
-                    "p1": float(ctab["[CameraCalibrationComponent].intrinsic.p1"][i]),
-                    "p2": float(ctab["[CameraCalibrationComponent].intrinsic.p2"][i]),
-                    "k3": float(ctab["[CameraCalibrationComponent].intrinsic.k3"][i]),
-                },
-                "extrinsic_transform": [float(v) for v in ctab["[CameraCalibrationComponent].extrinsic.transform"][i]],
-                "width": int(ctab["[CameraCalibrationComponent].width"][i]),
-                "height": int(ctab["[CameraCalibrationComponent].height"][i]),
-            }
+
+def _state(anchor: np.ndarray, pose: np.ndarray, velocity: list[float], prev: dict[str, Any] | None, dt: float) -> list[float]:
+    relative = np.linalg.inv(anchor) @ pose
+    speed = float(np.linalg.norm(np.asarray(velocity, dtype=np.float64)[:2]))
+    if prev is None:
+        yaw_rate = 0.0
+    else:
+        yaw_rate = _wrap(_yaw(pose) - _yaw(prev["pose"])) / max(dt, 1e-3)
+    return [float(relative[0, 3]), float(relative[1, 3]), _wrap(_yaw(relative)), speed, float(yaw_rate)]
+
+
+def export_segment(image_path: Path, calibration_path: Path, pose_path: Path, output_root: Path, stride: int) -> list[dict[str, Any]]:
+    segment = image_path.stem
+    rows = _read_segment(image_path, pose_path)
+    if len(rows) < WINDOW:
+        return []
+    calibration = _calibration(calibration_path)
+    segment_root = output_root / "frames" / segment / "front"
+    segment_root.mkdir(parents=True, exist_ok=True)
+    records = []
+    for anchor_idx in range((HISTORY - 1) * STEP, len(rows) - (FUTURE * STEP), stride):
+        indices = [anchor_idx + (j - (HISTORY - 1)) * STEP for j in range(HISTORY + FUTURE)]
+        if indices[-1] >= len(rows):
             break
-    return image_path.stem, rows, cal
+        selected = [rows[i] for i in indices]
+        anchor = selected[HISTORY - 1]["pose"]
+        paths = []
+        for item in selected:
+            path = segment_root / f"{item['timestamp']}.jpg"
+            if not path.exists():
+                path.write_bytes(item["image"])
+            paths.append(str(path.resolve()))
+        states = [_state(anchor, item["pose"], item["velocity"], selected[max(0, j - 1)] if j else None, 0.5) for j, item in enumerate(selected)]
+        future_times = [0.5 * (i + 1) for i in range(FUTURE)]
+        records.append({
+            "protocol": "iac-level1-continuous-v2",
+            "record_type": "native_dataset_pair",
+            "dataset": "waymo_perception_v2",
+            "sample_id": f"{segment}:{selected[HISTORY - 1]['timestamp']}",
+            "source_key": f"waymo_perception_v2:{segment}:{selected[HISTORY - 1]['timestamp']}",
+            "scene_id": segment,
+            "scene_name": segment,
+            "segment_id": segment,
+            "anchor_timestamp_micros": selected[HISTORY - 1]["timestamp"],
+            "camera": "FRONT",
+            **calibration,
+            "history_times_s": [-1.5, -1.0, -0.5, 0.0],
+            "future_times_s": future_times,
+            "history_images": paths[:HISTORY],
+            "future_images": paths[HISTORY:],
+            "history_ego_state": states[:HISTORY],
+            "realized_future_ego_state": states[HISTORY:],
+            "trajectory": [s[:3] for s in states[HISTORY:]],
+            "future_images_source": "native_dataset_realized",
+            "state_reference_source": "waymo_vehicle_pose_plus_camera_velocity",
+            "continuous_source_fps": 10.0,
+        })
+    return records
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--input", type=Path, required=True, help="Perception root containing component directories")
-    ap.add_argument("--output", type=Path, required=True)
-    ap.add_argument("--camera", type=int, default=1, help="Waymo FRONT camera (default: 1)")
-    ap.add_argument("--stride-10hz", type=int, default=5, help="Anchor stride in source 10 Hz frames")
-    ap.add_argument("--sample-stride", type=int, default=1, help="Keep every N generated anchors")
-    args = ap.parse_args()
-    image_dir = args.input / "camera_image"
-    pose_dir = args.input / "vehicle_pose"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input", type=Path, required=True, help="raw/perception_v2/validation")
+    parser.add_argument("--output", type=Path, required=True, help="frames/level1_v2 output root")
+    parser.add_argument("--stride-frames", type=int, default=WINDOW)
+    args = parser.parse_args()
+    image_root = args.input / "camera_image"
+    cal_root = args.input / "camera_calibration"
+    pose_root = args.input / "vehicle_pose"
     args.output.mkdir(parents=True, exist_ok=True)
-    manifest_path = args.output / "manifest.jsonl"
+    out_path = args.output / "manifest.jsonl"
     total = 0
-    with manifest_path.open("w", encoding="utf-8") as out:
-        for image_path in sorted(image_dir.glob("*.parquet")):
-            pose_path = pose_dir / image_path.name
-            if not pose_path.exists():
-                print(f"skip {image_path.name}: missing vehicle_pose parquet")
+    with out_path.open("w", encoding="utf-8") as handle:
+        for image_path in sorted(image_root.glob("*.parquet")):
+            calibration_path = cal_root / image_path.name
+            pose_path = pose_root / image_path.name
+            if not calibration_path.is_file() or not pose_path.is_file():
                 continue
-            segment, rows, calibration = _load_segment(image_path, pose_path, args.camera)
-            frame_root = args.output / "frames" / segment / "front"
-            frame_root.mkdir(parents=True, exist_ok=True)
-            image_paths = {}
-            for row in rows:
-                ts = row["timestamp_micros"]
-                path = frame_root / f"{ts}.jpg"
-                if not path.exists():
-                    path.write_bytes(row["image"])
-                image_paths[ts] = str(path.relative_to(args.output).as_posix())
-            if calibration:
-                cam_path = args.output / "camera" / f"{segment}.json"
-                cam_path.parent.mkdir(parents=True, exist_ok=True)
-                cam_path.write_text(json.dumps(calibration, indent=2), encoding="utf-8")
-
-            # 10 Hz source -> 0.5 s protocol points. Need 1.5 s history and 4 s future.
-            hist_offsets = [-3 * args.stride_10hz, -2 * args.stride_10hz, -args.stride_10hz, 0]
-            fut_offsets = [i * args.stride_10hz for i in range(1, 9)]
-            lo, hi = 3 * args.stride_10hz, len(rows) - 40
-            states = _relative_states(rows, 0)  # recomputed per anchor below
-            anchors = list(range(lo, hi + 1, args.stride_10hz * args.sample_stride))
-            for anchor in anchors:
-                indices = [anchor + o for o in hist_offsets + fut_offsets]
-                if min(indices) < 0 or max(indices) >= len(rows):
-                    continue
-                states = _relative_states(rows, anchor)
-                hidx, fidx = indices[:4], indices[4:]
-                intrinsics = None
-                distortion = []
-                camera_to_ego = None
-                if calibration:
-                    k = calibration["intrinsics"]
-                    intrinsics = [[k["f_u"], 0.0, k["c_u"]], [0.0, k["f_v"], k["c_v"]], [0.0, 0.0, 1.0]]
-                    distortion = [k["k1"], k["k2"], k["p1"], k["p2"], k["k3"]]
-                    camera_to_ego = np.asarray(calibration["extrinsic_transform"], dtype=np.float64).reshape(4, 4).tolist()
-                future_states = [states[i] for i in fidx]
-                row = {
-                    "dataset": "waymo_perception_v2",
-                    "sample_id": f"{segment}:{rows[anchor]['timestamp_micros']}",
-                    "scene_id": segment,
-                    "source_key": f"waymo_perception_v2:{segment}:{rows[anchor]['timestamp_micros']}",
-                    "scene_name": segment,
-                    "segment_id": segment,
-                    "anchor_timestamp_micros": rows[anchor]["timestamp_micros"],
-                    "camera": "FRONT",
-                    "camera_calibration": str((Path("camera") / f"{segment}.json").as_posix()) if calibration else None,
-                    "intrinsics": intrinsics,
-                    "distortion": distortion,
-                    "camera_to_ego": camera_to_ego,
-                    "history_times_s": [-1.5, -1.0, -0.5, 0.0],
-                    "future_times_s": [0.5 * i for i in range(1, 9)],
-                    "history_images": [image_paths[rows[i]["timestamp_micros"]] for i in hidx],
-                    "future_images": [image_paths[rows[i]["timestamp_micros"]] for i in fidx],
-                    "history_ego_state": [states[i] for i in hidx],
-                    "realized_future_ego_state": future_states,
-                    "trajectory": [state[:3] for state in future_states],
-                    "future_images_source": "native_dataset_realized",
-                    "state_reference_source": "waymo_vehicle_pose_plus_camera_velocity",
-                    "continuous_source_fps": 10.0,
-                    "protocol": "iac-level1-continuous-v1",
-                }
-                out.write(json.dumps(row, separators=(",", ":")) + "\n")
-                total += 1
-    print(json.dumps({"manifest": str(manifest_path), "samples": total}, indent=2))
+            try:
+                records = export_segment(image_path, calibration_path, pose_path, args.output, args.stride_frames)
+            except Exception as exc:
+                print(json.dumps({"segment": image_path.stem, "status": "failed", "error": repr(exc)}))
+                continue
+            for record in records:
+                handle.write(json.dumps(record, separators=(",", ":")) + "\n")
+            total += len(records)
+            print(json.dumps({"segment": image_path.stem, "records": len(records)}))
+    print(json.dumps({"records": total, "output": str(out_path.resolve()), "stride_frames": args.stride_frames}, indent=2))
 
 
 if __name__ == "__main__":

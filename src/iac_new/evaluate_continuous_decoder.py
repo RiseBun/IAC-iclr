@@ -14,7 +14,6 @@ import numpy as np
 from iac_new.depth import load_cached_metric_depth, metric_depth_reliability_masks
 from iac_new.dino_features import DINOv2TemporalConsistency
 from iac_new.flow import RaftFlowExtractor
-from iac_new.sea_raft_flow import SeaRaftFlowExtractor
 from iac_new.perception import build_perception, temporal_road_consensus
 from iac_new.protocol import read_jsonl, validate_record, write_jsonl
 from iac_new.road_relative import road_relative_posterior
@@ -30,7 +29,7 @@ def _json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def evaluate_record(record: dict[str, Any], extractor: RaftFlowExtractor | SeaRaftFlowExtractor, config: dict[str, Any], perception: Any | None, dino: Any | None = None) -> dict[str, Any]:
+def evaluate_record(record: dict[str, Any], extractor: RaftFlowExtractor, config: dict[str, Any], perception: Any | None, dino: Any | None = None) -> dict[str, Any]:
     image_cfg = config["image"]
     width, height = int(image_cfg["width"]), int(image_cfg["height"])
     flow = extractor.observe(
@@ -631,23 +630,15 @@ def main() -> None:
         raw_rows = raw_rows[: args.max_samples]
     records = [validate_record(row, manifest_root=args.manifest.parent) for row in raw_rows]
     flow_cfg = config["flow"]
-    if str(flow_cfg.get("backend", "torchvision_raft")) == "sea_raft":
-        extractor = SeaRaftFlowExtractor(
-            checkpoint=str(flow_cfg["checkpoint"]),
-            device=args.device,
-            iters=int(flow_cfg.get("iters", 12)),
-            forward_backward=bool(flow_cfg.get("forward_backward", True)),
-            fb_abs_threshold_px=float(flow_cfg.get("fb_abs_threshold_px", 1.5)),
-            fb_relative_threshold=float(flow_cfg.get("fb_relative_threshold", 0.05)),
-        )
-    else:
-        extractor = RaftFlowExtractor(
-            model_size=str(flow_cfg["model"]), device=args.device,
-            updates=int(flow_cfg["updates"]), batch_size=int(flow_cfg["batch_size"]),
-            forward_backward=bool(flow_cfg["forward_backward"]),
-            fb_abs_threshold_px=float(flow_cfg["fb_abs_threshold_px"]),
-            fb_relative_threshold=float(flow_cfg["fb_relative_threshold"]),
-        )
+    if str(flow_cfg.get("backend", "torchvision_raft")) != "torchvision_raft":
+        raise ValueError("benchmark_release_v1 freezes the torchvision RAFT-Large backend")
+    extractor = RaftFlowExtractor(
+        model_size=str(flow_cfg["model"]), device=args.device,
+        updates=int(flow_cfg["updates"]), batch_size=int(flow_cfg["batch_size"]),
+        forward_backward=bool(flow_cfg["forward_backward"]),
+        fb_abs_threshold_px=float(flow_cfg["fb_abs_threshold_px"]),
+        fb_relative_threshold=float(flow_cfg["fb_relative_threshold"]),
+    )
     perception = build_perception(config, device=args.device)
     dino = None
     dino_cfg = config.get("dino", {})

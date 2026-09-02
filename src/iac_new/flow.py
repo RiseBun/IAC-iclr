@@ -72,6 +72,7 @@ class RaftFlowExtractor:
         forward_backward: bool,
         fb_abs_threshold_px: float,
         fb_relative_threshold: float,
+        checkpoint: str | None = None,
     ) -> None:
         import torch
         from torchvision.models.optical_flow import (
@@ -82,11 +83,18 @@ class RaftFlowExtractor:
         )
 
         if model_size == "large":
-            model = raft_large(weights=Raft_Large_Weights.DEFAULT, progress=False)
+            model = raft_large(weights=None if checkpoint else Raft_Large_Weights.DEFAULT, progress=False)
         elif model_size == "small":
             model = raft_small(weights=Raft_Small_Weights.DEFAULT, progress=False)
         else:
             raise ValueError("model_size must be 'small' or 'large'")
+        if checkpoint:
+            state = torch.load(str(checkpoint), map_location="cpu")
+            if isinstance(state, dict) and "state_dict" in state:
+                state = state["state_dict"]
+            if not isinstance(state, dict):
+                raise ValueError("RAFT checkpoint must contain a state dict")
+            model.load_state_dict(state, strict=True)
         self.torch = torch
         self.model = model.to(device).eval()
         self.model_size = model_size

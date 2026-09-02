@@ -105,6 +105,55 @@ def _history_times(row: dict[str, Any], history_count: int) -> list[float]:
     return [float(value) for value in times]
 
 
+def _shape_eligibility(
+    interval_observability: list[dict[str, Any]],
+    road_relative_support: list[dict[str, Any]],
+    *,
+    enable_fallback: bool = True,
+    fallback_min_observability: float = 0.05,
+) -> tuple[list[str], list[float], list[str]]:
+    """Build shape-only eligibility with a conservative geometric fallback.
+
+    The fallback is deliberately uncertain: it can rescue a direction/shape
+    measurement when pixelwise FB is dominated by glare or dynamic foreground,
+    but it must never make the interval speed-usable.
+    """
+    shape_status: list[str] = []
+    shape_observability: list[float] = []
+    reasons: list[str] = []
+    for index, item in enumerate(interval_observability):
+        direction_ok = bool(item.get("direction_observable"))
+        curvature_status = str(item.get("curvature_status", "abstain"))
+        support = road_relative_support[index] if index < len(road_relative_support) else {}
+        support_obs = float(np.clip(support.get("observability", 0.0), 0.0, 1.0))
+        fallback = (
+            enable_fallback
+            and
+            not direction_ok
+            and "forward_backward_inconsistent" in str(item.get("status", ""))
+            and curvature_status == "usable"
+            and support_obs >= float(fallback_min_observability)
+        )
+        if direction_ok and curvature_status == "usable":
+            shape_status.append("usable")
+            reasons.append("direct_flow_geometry")
+        elif direction_ok and curvature_status == "uncertain":
+            shape_status.append("uncertain")
+            reasons.append("direct_flow_geometry_uncertain")
+        elif fallback:
+            shape_status.append("uncertain")
+            reasons.append("robust_geometry_fallback_after_fb_gate")
+        else:
+            shape_status.append("abstain")
+            reasons.append("no_shape_support")
+        shape_observability.append(float(np.clip(
+            max(item.get("effective_static_pixel_fraction", 0.0), support_obs if fallback else 0.0),
+            0.0,
+            1.0,
+        )))
+    return shape_status, shape_observability, reasons
+
+
 def _retime_profile(
     profile: dict[str, Any],
     target_times_s: list[float],
@@ -204,6 +253,7 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
             record["reference_motion_profile"],
             record["image_motion_profile"],
             include_uncertain=include_uncertain,
+            include_shape_uncertain=True,
         )
         reversed_behavior = compare_longitudinal_behavior(
             reversed_profile,
@@ -217,6 +267,7 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
             record["reference_motion_profile"],
             scale_mode="relative",
             include_uncertain=include_uncertain,
+            include_shape_uncertain=True,
             allow_non_image_source=True,
         )
         matched_shuffle: dict[str, Any] = {
@@ -253,6 +304,7 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
                     record["reference_motion_profile"],
                     record["image_motion_profile"],
                     include_uncertain=include_uncertain,
+                    include_shape_uncertain=True,
                 )
                 matched_shuffle = {
                     "status": "ok",
@@ -271,6 +323,7 @@ def add_specificity_controls(records: list[dict[str, Any]], *, include_uncertain
                         record["reference_motion_profile"],
                         scale_mode="relative",
                         include_uncertain=include_uncertain,
+                        include_shape_uncertain=True,
                     ),
                 }
         record["specificity_controls"] = {
@@ -360,6 +413,7 @@ def add_arc_pose_controls(records: list[dict[str, Any]], *, include_uncertain: b
             record["reference_motion_profile"],
             scale_mode="arc_relative",
             include_uncertain=include_uncertain,
+            include_shape_uncertain=True,
         )
         candidates = [
             other for other in eligible
@@ -397,6 +451,7 @@ def add_arc_pose_controls(records: list[dict[str, Any]], *, include_uncertain: b
                     record["reference_motion_profile"],
                     scale_mode="arc_relative",
                     include_uncertain=include_uncertain,
+                    include_shape_uncertain=True,
                 )
                 matched = {
                     "status": "ok",
@@ -762,7 +817,12 @@ def _incremental_evidence(
     return output
 
 
-def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str, Any]:
+def aggregate(
+    records: list[dict[str, Any]],
+    reference_source: str,
+    *,
+    shape_fallback_enabled: bool = True,
+) -> dict[str, Any]:
     valid = [record for record in records if record.get("comparison", {}).get("status") == "ok"]
     fields = MOTION_FIELDS
     metrics: dict[str, Any] = {}
@@ -951,7 +1011,12 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
         ])),
         "samples": len(joint_coverages),
     }
-    behavior_rows = [record.get("longitudinal_behavior") for record in valid if record.get("longitudinal_behavior")]
+    behavior_rows = [
+        record.get("longitudinal_behavior")
+        for record in valid
+        if record.get("longitudinal_behavior", {}).get("status") == "ok"
+        and record.get("longitudinal_behavior", {}).get("delta_speed_mae_mps") is not None
+    ]
     behavior = {
         "delta_speed_mae_mps": None if not behavior_rows else float(np.mean([row["delta_speed_mae_mps"] for row in behavior_rows])),
         "change_direction_accuracy": None if not behavior_rows else float(np.mean([row["change_direction_accuracy"] for row in behavior_rows])),
@@ -994,6 +1059,7 @@ def aggregate(records: list[dict[str, Any]], reference_source: str) -> dict[str,
             else "single_branch_image_action_alignment"
         ),
         "future_action_alignment_eligible": reference_source == "action",
+        "shape_fallback_enabled": bool(shape_fallback_enabled),
         "formal_level1_evidence_eligible": reference_source == "action" and target_protocol_ready and input_audit_ready,
         "level1_input_audit": {
             "ready": input_audit_ready,
@@ -1061,6 +1127,11 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--reference-source", choices=("logged_gt", "realized", "action"), default="logged_gt")
     parser.add_argument("--include-uncertain", action="store_true")
+    parser.add_argument(
+        "--disable-shape-fallback",
+        action="store_true",
+        help="disable the experimental shape-only FB fallback and use strict gate A",
+    )
     parser.add_argument("--require-eight-frame-four-second", action="store_true")
     parser.add_argument("--longitudinal-calibration", type=Path)
     parser.add_argument("--pose-calibration", type=Path)
@@ -1146,42 +1217,71 @@ def main() -> None:
             history_times_s=history_times,
             model="constant_acceleration_yaw_rate",
         )
-        raw_imagined = image_motion_profile(score["decoder"], times, initial_speed_mps=initial_speed)
+        # Split eligibility before constructing the profile: speed posterior
+        # quality (0.25/0.55) must not gate lateral/yaw/curvature.  The shape
+        # gate is derived only from the image-side observability record.
+        decoder_for_profile = copy.deepcopy(score["decoder"])
+        interval_observability = list(score.get("observability_by_future_interval") or [])
+        if len(interval_observability) == len(times):
+            shape_status, shape_observability, shape_fallback_reasons = _shape_eligibility(
+                interval_observability,
+                list((score.get("road_relative_posterior") or {}).get("support") or []),
+                enable_fallback=not args.disable_shape_fallback,
+            )
+            flow_status = [str(item.get("status", "abstain")) for item in interval_observability]
+            decoder_for_profile["shape_status_by_interval"] = shape_status
+            decoder_for_profile["shape_observability_by_interval"] = shape_observability
+            decoder_for_profile["flow_status_by_interval"] = flow_status
+            decoder_for_profile["shape_fallback_reason_by_interval"] = shape_fallback_reasons
+        raw_imagined = image_motion_profile(
+            decoder_for_profile, times, initial_speed_mps=initial_speed
+        )
         if calibration is None:
             imagined = raw_imagined
         else:
             parameters = calibration.get("parameters") or {}
             imagined = history_anchored_residual_motion_profile(
-                score["decoder"],
+                decoder_for_profile,
                 times,
                 history_profile,
                 longitudinal_gain=float(parameters["longitudinal_gain"]),
                 speed_interval_radius_mps=float(parameters["speed_interval_radius_mps"]),
             )
-        comparison = compare_motion_profiles(imagined, reference, include_uncertain=args.include_uncertain)
+        comparison = compare_motion_profiles(
+            imagined, reference, include_uncertain=args.include_uncertain,
+            include_shape_uncertain=True,
+        )
         distance_alignment_metric = compare_distance_profiles(
-            imagined, reference, scale_mode="metric", include_uncertain=args.include_uncertain
+            imagined, reference, scale_mode="metric", include_uncertain=args.include_uncertain,
+            include_shape_uncertain=True,
         )
         distance_alignment_scale_free = compare_distance_profiles(
-            imagined, reference, scale_mode="scale_free", include_uncertain=args.include_uncertain
+            imagined, reference, scale_mode="scale_free", include_uncertain=args.include_uncertain,
+            include_shape_uncertain=True,
         )
         pose_alignment_metric = compare_pose_profiles(
-            imagined, reference, scale_mode="metric", include_uncertain=args.include_uncertain
+            imagined, reference, scale_mode="metric", include_uncertain=args.include_uncertain,
+            include_shape_uncertain=True,
         )
         pose_alignment_scale_free = compare_pose_profiles(
-            imagined, reference, scale_mode="scale_free", include_uncertain=args.include_uncertain
+            imagined, reference, scale_mode="scale_free", include_uncertain=args.include_uncertain,
+            include_shape_uncertain=True,
         )
         distance_alignment_relative = compare_distance_profiles(
-            imagined, reference, scale_mode="relative", include_uncertain=args.include_uncertain
+            imagined, reference, scale_mode="relative", include_uncertain=args.include_uncertain,
+            include_shape_uncertain=True,
         )
         distance_alignment_relative_observable = compare_distance_profiles(
-            imagined, reference, scale_mode="relative", include_uncertain=True
+            imagined, reference, scale_mode="relative", include_uncertain=True,
+            include_shape_uncertain=True,
         )
         pose_alignment_relative = compare_pose_profiles(
-            imagined, reference, scale_mode="relative", include_uncertain=args.include_uncertain
+            imagined, reference, scale_mode="relative", include_uncertain=args.include_uncertain,
+            include_shape_uncertain=True,
         )
         pose_alignment_arc_relative = compare_pose_profiles(
-            imagined, reference, scale_mode="arc_relative", include_uncertain=args.include_uncertain
+            imagined, reference, scale_mode="arc_relative", include_uncertain=args.include_uncertain,
+            include_shape_uncertain=True,
         )
         pose_image_profile = (
             apply_pose_interval_calibration(raw_imagined, pose_calibration)
@@ -1189,10 +1289,12 @@ def main() -> None:
             else raw_imagined
         )
         pose_posterior = compare_pose_posteriors(
-            pose_image_profile, reference, include_uncertain=args.include_uncertain
+            pose_image_profile, reference, include_uncertain=args.include_uncertain,
+            include_shape_uncertain=True,
         )
         raw_comparison = compare_motion_profiles(
-            raw_imagined, reference, include_uncertain=args.include_uncertain
+            raw_imagined, reference, include_uncertain=args.include_uncertain,
+            include_shape_uncertain=True,
         )
         longitudinal_behavior = compare_longitudinal_behavior(
             imagined,
@@ -1211,12 +1313,14 @@ def main() -> None:
             reference,
             imagined,
             include_uncertain=args.include_uncertain,
+            include_shape_uncertain=True,
         )
         history_cv_comparison = compare_history_baseline(
             history_cv_profile,
             reference,
             imagined,
             include_uncertain=args.include_uncertain,
+            include_shape_uncertain=True,
         )
         records.append({
             "sample_id": sample_id,
@@ -1259,7 +1363,11 @@ def main() -> None:
     add_arc_pose_controls(records, include_uncertain=args.include_uncertain)
     add_relative_distance_controls(records)
     report = {
-        "summary": aggregate(records, args.reference_source),
+        "summary": aggregate(
+            records,
+            args.reference_source,
+            shape_fallback_enabled=not args.disable_shape_fallback,
+        ),
         "calibration_application_split": args.calibration_application_split,
         "longitudinal_calibration": calibration,
         "pose_interval_calibration": pose_calibration,

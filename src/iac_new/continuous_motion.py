@@ -21,6 +21,73 @@ MOTION_FIELDS = (
     "curvature_1pm",
 )
 
+# These quantities are geometric shape signals.  They must not inherit the
+# absolute-speed quality gate (especially the 0.55 posterior threshold).
+SHAPE_FIELDS = frozenset({"lateral_speed_mps", "yaw_rate_radps", "curvature_1pm"})
+
+
+def classify_stationary_state(
+    rows: list[dict[str, Any]],
+    *,
+    initial_speed_mps: float | None = None,
+    flow_status_by_interval: list[str] | None = None,
+    stop_speed_mps: float = 0.5,
+    minimum_low_speed_fraction: float = 0.75,
+) -> dict[str, Any]:
+    """Classify a conservative near-stop state without fabricating speed.
+
+    A dead flow field is not, by itself, proof that the ego vehicle stopped:
+    it can also mean that the scene is uninformative.  We therefore require
+    the history anchor speed and most image intervals to agree on near-zero
+    motion.  The result is a categorical ``stopped``/``near_stop`` candidate
+    with evidence and confidence; it is never used as a metric speed value.
+    """
+    speeds = np.asarray(
+        [row.get("speed_mps", np.nan) for row in rows], dtype=np.float64
+    )
+    finite = np.isfinite(speeds)
+    if not finite.any():
+        return {
+            "state": "unknown",
+            "confidence": 0.0,
+            "evidence": "no_finite_image_speed",
+            "low_speed_fraction": 0.0,
+        }
+    low_fraction = float(np.mean(np.abs(speeds[finite]) <= float(stop_speed_mps)))
+    anchor_known = initial_speed_mps is not None and np.isfinite(float(initial_speed_mps))
+    anchor_low = anchor_known and abs(float(initial_speed_mps)) <= float(stop_speed_mps)
+    low_quality = all(
+        str(row.get("speed_status", row.get("status", "abstain"))) != "usable"
+        for row in rows
+    )
+    flow_dead = bool(flow_status_by_interval) and all(
+        "low_flow_magnitude" in str(value) for value in flow_status_by_interval
+    )
+    if anchor_low and low_fraction >= float(minimum_low_speed_fraction) and (low_quality or flow_dead):
+        return {
+            "state": "stopped",
+            "confidence": float(np.clip(0.70 + 0.25 * low_fraction, 0.70, 0.95)),
+            "evidence": (
+                "low_history_speed_and_dead_flow"
+                if flow_dead
+                else "low_history_speed_and_dead_or_uncertain_future_flow"
+            ),
+            "low_speed_fraction": low_fraction,
+        }
+    if anchor_low and low_fraction >= 0.5:
+        return {
+            "state": "near_stop",
+            "confidence": float(np.clip(0.45 + 0.35 * low_fraction, 0.45, 0.80)),
+            "evidence": "low_history_speed_but_future_motion_not_fully_static",
+            "low_speed_fraction": low_fraction,
+        }
+    return {
+        "state": "moving_or_unknown",
+        "confidence": 0.0,
+        "evidence": "insufficient_stop_agreement",
+        "low_speed_fraction": low_fraction,
+    }
+
 IMAGE_PROFILE_SOURCES = {
     "image_only_candidate_blind_decoder",
     "history_anchored_image_residual_decoder",
@@ -224,6 +291,9 @@ def image_motion_profile(
     future_times_s: Any,
     *,
     initial_speed_mps: float | None = None,
+    shape_status_by_interval: list[str] | None = None,
+    shape_observability_by_interval: list[float] | None = None,
+    flow_status_by_interval: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build an image-only motion posterior from a completed decoder output."""
     if decoder.get("protocol") != "candidate-blind-continuous-trajectory-v1":
@@ -237,6 +307,29 @@ def image_motion_profile(
     pose_support = list(decoder.get("profile_support") or [])
     if pose_support and len(pose_support) != len(profile["rows"]):
         raise ValueError("decoder profile_support must match trajectory intervals")
+    if shape_status_by_interval is None:
+        shape_status_by_interval = decoder.get("shape_status_by_interval")
+    if shape_status_by_interval is not None:
+        shape_status_by_interval = [str(value) for value in shape_status_by_interval]
+        if len(shape_status_by_interval) != len(profile["rows"]):
+            raise ValueError("shape_status_by_interval must match trajectory intervals")
+    if shape_observability_by_interval is None:
+        shape_observability_by_interval = decoder.get("shape_observability_by_interval")
+    if shape_observability_by_interval is not None:
+        shape_observability_by_interval = [float(value) for value in shape_observability_by_interval]
+        if len(shape_observability_by_interval) != len(profile["rows"]):
+            raise ValueError("shape_observability_by_interval must match trajectory intervals")
+    if flow_status_by_interval is None:
+        flow_status_by_interval = decoder.get("flow_status_by_interval")
+    if flow_status_by_interval is not None:
+        flow_status_by_interval = [str(value) for value in flow_status_by_interval]
+        if len(flow_status_by_interval) != len(profile["rows"]):
+            raise ValueError("flow_status_by_interval must match trajectory intervals")
+    shape_fallback_reasons = decoder.get("shape_fallback_reason_by_interval")
+    if shape_fallback_reasons is not None:
+        shape_fallback_reasons = [str(value) for value in shape_fallback_reasons]
+        if len(shape_fallback_reasons) != len(profile["rows"]):
+            raise ValueError("shape_fallback_reason_by_interval must match trajectory intervals")
     speeds = np.asarray([float(item["q50"]) for item in speed_support], dtype=np.float64)
     times = np.asarray(future_times_s, dtype=np.float64)
     dt = np.diff(np.concatenate([[0.0], times]))
@@ -254,8 +347,31 @@ def image_motion_profile(
             "q50": float(support["q50"]),
             "q95": float(support["q95"]),
         }
-        row["observability"] = float(np.clip(support.get("observability", 0.0), 0.0, 1.0))
-        row["status"] = str(support.get("status", "abstain"))
+        row["speed_observability"] = float(np.clip(support.get("observability", 0.0), 0.0, 1.0))
+        row["speed_status"] = str(support.get("status", "abstain"))
+        if flow_status_by_interval is not None:
+            row["flow_status"] = flow_status_by_interval[index]
+        shape_status = (
+            shape_status_by_interval[index]
+            if shape_status_by_interval is not None
+            else row["speed_status"]
+        )
+        row["shape_status"] = shape_status
+        if shape_fallback_reasons is not None:
+            row["shape_eligibility_reason"] = shape_fallback_reasons[index]
+        row["status"] = shape_status
+        row["shape_observability"] = float(
+            np.clip(
+                shape_observability_by_interval[index]
+                if shape_observability_by_interval is not None
+                else support.get("observability", 0.0),
+                0.0,
+                1.0,
+            )
+        )
+        # ``observability`` is retained as the historical shape-facing field;
+        # speed quality is now explicit in ``speed_observability``.
+        row["observability"] = row["shape_observability"]
         if pose_support:
             support_row = pose_support[index]
             intervals = {}
@@ -300,6 +416,11 @@ def image_motion_profile(
     else:
         profile["source"] = "image_only_candidate_blind_decoder"
     profile["candidate_bank_used"] = False
+    profile["stationary_state"] = classify_stationary_state(
+        profile["rows"],
+        initial_speed_mps=profile.get("initial_speed_mps", initial_speed_mps),
+        flow_status_by_interval=flow_status_by_interval,
+    )
     return profile
 
 
@@ -554,6 +675,7 @@ def _compare_profile_rows(
     eligibility_profile: dict[str, Any],
     *,
     include_uncertain: bool,
+    include_shape_uncertain: bool | None = None,
     limits: dict[str, float],
     score_speed_posterior: bool,
 ) -> dict[str, Any]:
@@ -562,7 +684,12 @@ def _compare_profile_rows(
     eligibility_rows = list(eligibility_profile.get("rows") or [])
     if not predicted_rows or len(predicted_rows) != len(action_rows) or len(predicted_rows) != len(eligibility_rows):
         raise ValueError("predicted, action, and eligibility profiles must have matching non-empty rows")
-    allowed = {"usable", "uncertain"} if include_uncertain else {"usable"}
+    allowed_speed = {"usable", "uncertain"} if include_uncertain else {"usable"}
+    allowed_shape = (
+        {"usable", "uncertain"}
+        if (include_uncertain if include_shape_uncertain is None else include_shape_uncertain)
+        else {"usable"}
+    )
     per_interval = []
     metric_errors: dict[str, list[float]] = {field: [] for field in MOTION_FIELDS}
     metric_weights: dict[str, list[float]] = {field: [] for field in MOTION_FIELDS}
@@ -572,12 +699,21 @@ def _compare_profile_rows(
         timestamps = (predicted_row["time_s"], action_row["time_s"], gate_row["time_s"])
         if max(float(value) for value in timestamps) - min(float(value) for value in timestamps) > 1e-6:
             raise ValueError("predicted, action, and eligibility timestamps must match")
-        use = gate_row.get("status") in allowed
+        gate_status_by_field = {
+            field: gate_row.get(
+                "shape_status" if field in SHAPE_FIELDS else "speed_status",
+                gate_row.get("status", "abstain"),
+            )
+            for field in MOTION_FIELDS
+        }
+        shape_use = gate_status_by_field["lateral_speed_mps"] in allowed_shape
+        speed_use = gate_status_by_field["speed_mps"] in allowed_speed
         observability = float(np.clip(gate_row.get("observability", 0.0), 0.0, 1.0))
         errors: dict[str, float | None] = {}
-        if use:
+        if shape_use:
             evaluable += 1
         for field in MOTION_FIELDS:
+            use = gate_status_by_field[field] in (allowed_shape if field in SHAPE_FIELDS else allowed_speed)
             left, right = predicted_row.get(field), action_row.get(field)
             error = abs(float(left) - float(right)) if _finite_pair(left, right) else None
             errors[field] = error
@@ -589,7 +725,7 @@ def _compare_profile_rows(
         interval_width = None
         interval_score = None
         wis = None
-        if use and interval and _finite_pair(action_row.get("speed_mps"), interval.get("q05")):
+        if speed_use and interval and _finite_pair(action_row.get("speed_mps"), interval.get("q05")):
             lower = float(interval["q05"])
             median = float(interval["q50"])
             upper = float(interval["q95"])
@@ -609,8 +745,12 @@ def _compare_profile_rows(
         per_interval.append({
             "time_s": float(gate_row["time_s"]),
             "status": gate_row.get("status"),
+            "shape_status": gate_row.get("shape_status", gate_row.get("status", "abstain")),
+            "speed_status": gate_row.get("speed_status", gate_row.get("status", "abstain")),
             "observability": observability,
-            "evaluable": use,
+            "evaluable": shape_use,
+            "shape_evaluable": shape_use,
+            "speed_evaluable": speed_use,
             "absolute_errors": errors,
             "speed_interval_contains_action": speed_hit,
             "speed_interval_width_mps": interval_width,
@@ -676,6 +816,7 @@ def compare_motion_profiles(
     action_profile: dict[str, Any],
     *,
     include_uncertain: bool = False,
+    include_shape_uncertain: bool | None = None,
     tolerances: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Compare image-derived and action-derived motion without text labels."""
@@ -686,6 +827,7 @@ def compare_motion_profiles(
         action_profile,
         image_profile,
         include_uncertain=include_uncertain,
+        include_shape_uncertain=include_shape_uncertain,
         limits=_comparison_limits(tolerances),
         score_speed_posterior=True,
     )
@@ -705,6 +847,7 @@ def compare_distance_profiles(
     *,
     scale_mode: str = "metric",
     include_uncertain: bool = False,
+    include_shape_uncertain: bool | None = None,
     allow_non_image_source: bool = False,
 ) -> dict[str, Any]:
     """Compare forward displacement in metric or relative-shape coordinates.
@@ -749,13 +892,17 @@ def compare_distance_profiles(
         scale_ratio = predicted_scale / action_scale
         predicted = predicted / predicted_scale
         action = action / action_scale
-    allowed = {"usable", "uncertain"} if include_uncertain else {"usable"}
+    allowed = (
+        {"usable", "uncertain"}
+        if (include_uncertain if include_shape_uncertain is None else include_shape_uncertain)
+        else {"usable"}
+    )
     errors = []
     increments_predicted = np.diff(np.concatenate([[0.0], predicted]))
     increments_action = np.diff(np.concatenate([[0.0], action]))
     per_interval = []
     for index, (predicted_row, action_row) in enumerate(zip(predicted_rows, action_rows)):
-        status = str(predicted_row.get("status", "abstain"))
+        status = str(predicted_row.get("shape_status", predicted_row.get("status", "abstain")))
         use = status in allowed
         error = abs(float(predicted[index] - action[index])) if use else None
         if error is not None:
@@ -811,6 +958,7 @@ def compare_pose_profiles(
     *,
     scale_mode: str = "metric",
     include_uncertain: bool = False,
+    include_shape_uncertain: bool | None = None,
     allow_non_image_source: bool = False,
 ) -> dict[str, Any]:
     """Compare the time-indexed planar pose ``[x, y, heading]``."""
@@ -851,8 +999,12 @@ def compare_pose_profiles(
         scale_ratio = predicted_scale / action_scale
         predicted[:, :2] /= predicted_scale
         action[:, :2] /= action_scale
-    allowed = {"usable", "uncertain"} if include_uncertain else {"usable"}
-    valid = [index for index, row in enumerate(predicted_rows) if str(row.get("status", "abstain")) in allowed]
+    allowed = (
+        {"usable", "uncertain"}
+        if (include_uncertain if include_shape_uncertain is None else include_shape_uncertain)
+        else {"usable"}
+    )
+    valid = [index for index, row in enumerate(predicted_rows) if str(row.get("shape_status", row.get("status", "abstain"))) in allowed]
     if not valid:
         return {
             "protocol": "continuous-se2-pose-alignment-v1",
@@ -910,6 +1062,7 @@ def compare_pose_posteriors(
     action_profile: dict[str, Any],
     *,
     include_uncertain: bool = False,
+    include_shape_uncertain: bool | None = None,
     nominal_coverage: float = 0.90,
 ) -> dict[str, Any]:
     """Evaluate calibrated ``x/y/heading`` intervals against action waypoints."""
@@ -921,7 +1074,11 @@ def compare_pose_posteriors(
     action_rows = list(action_profile.get("rows") or [])
     if not predicted_rows or len(predicted_rows) != len(action_rows):
         raise ValueError("pose posterior profiles must have matching non-empty rows")
-    allowed = {"usable", "uncertain"} if include_uncertain else {"usable"}
+    allowed = (
+        {"usable", "uncertain"}
+        if (include_uncertain if include_shape_uncertain is None else include_shape_uncertain)
+        else {"usable"}
+    )
     components = {
         "x_m": ("progress_m", False),
         "y_m": ("lateral_offset_m", False),
@@ -933,7 +1090,7 @@ def compare_pose_posteriors(
     }
     joint_rows: list[tuple[bool, float]] = []
     for predicted, action in zip(predicted_rows, action_rows):
-        if str(predicted.get("status", "abstain")) not in allowed:
+        if str(predicted.get("shape_status", predicted.get("status", "abstain"))) not in allowed:
             continue
         intervals = predicted.get("pose_intervals") or {}
         component_hits = []
@@ -1002,7 +1159,7 @@ def compare_pose_posteriors(
             "absolute_calibration_error": abs(float(np.average(joint_values[:, 0], weights=joint_weights)) - nominal_coverage),
             "intervals": int(len(joint_rows)),
         }
-    total_eligible = sum(1 for row in predicted_rows if str(row.get("status", "abstain")) in allowed)
+    total_eligible = sum(1 for row in predicted_rows if str(row.get("shape_status", row.get("status", "abstain"))) in allowed)
     evaluated = sum(1 for row in rows_by_component["x_m"])
     return {
         "protocol": "continuous-se2-pose-posterior-v1",
@@ -1059,6 +1216,7 @@ def compare_history_baseline(
     image_profile: dict[str, Any],
     *,
     include_uncertain: bool = False,
+    include_shape_uncertain: bool | None = None,
     tolerances: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Score a history-only null on exactly the image probe's eligible rows."""
@@ -1074,6 +1232,7 @@ def compare_history_baseline(
         action_profile,
         image_profile,
         include_uncertain=include_uncertain,
+        include_shape_uncertain=include_shape_uncertain,
         limits=_comparison_limits(tolerances),
         score_speed_posterior=False,
     )
@@ -1089,6 +1248,7 @@ def compare_future_control(
     target_image_profile: dict[str, Any],
     *,
     include_uncertain: bool = False,
+    include_shape_uncertain: bool | None = None,
     tolerances: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Score a corrupted/shuffled future on the target probe's eligible rows."""
@@ -1101,6 +1261,7 @@ def compare_future_control(
         action_profile,
         target_image_profile,
         include_uncertain=include_uncertain,
+        include_shape_uncertain=include_shape_uncertain,
         limits=_comparison_limits(tolerances),
         score_speed_posterior=False,
     )
@@ -1183,7 +1344,7 @@ def compare_longitudinal_behavior(
     predicted_signs = []
     action_signs = []
     for predicted, action, gate in zip(predicted_rows, action_rows, gate_rows):
-        if gate.get("status") not in allowed:
+        if gate.get("speed_status", gate.get("status", "abstain")) not in allowed:
             continue
         predicted_delta = float(predicted["speed_mps"]) - float(predicted_anchor)
         action_delta = float(action["speed_mps"]) - float(action_anchor)
@@ -1257,7 +1418,8 @@ def compare_counterfactual_motion_deltas(
             clear_image["rows"], risk_image["rows"], clear_action["rows"], risk_action["rows"]
         ):
             values = (ci.get(field), ri.get(field), ca.get(field), ra.get(field))
-            usable = ci.get("status") == "usable" and ri.get("status") == "usable"
+            status_key = "shape_status" if field in SHAPE_FIELDS else "speed_status"
+            usable = ci.get(status_key, ci.get("status")) == "usable" and ri.get(status_key, ri.get("status")) == "usable"
             if usable and all(value is not None and np.isfinite(value) for value in values):
                 image_delta.append(float(values[1]) - float(values[0]))
                 action_delta.append(float(values[3]) - float(values[2]))
@@ -1410,7 +1572,10 @@ def compare_counterfactual_se2_consistency(
     valid = []
     weights = []
     for index, (ci, ri) in enumerate(zip(clear_image["rows"], risk_image["rows"])):
-        image_usable = ci.get("status") == "usable" and ri.get("status") == "usable"
+        image_usable = (
+            ci.get("shape_status", ci.get("status")) == "usable"
+            and ri.get("shape_status", ri.get("status")) == "usable"
+        )
         if image_usable and active[index]:
             valid.append(index)
             weights.append(max(min(float(ci.get("observability", 0.0)), float(ri.get("observability", 0.0))), 1e-3))

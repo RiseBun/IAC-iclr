@@ -1,0 +1,158 @@
+{
+  "protocol": "iac-scorecard-v1",
+  "benchmark": "benchmark_v1",
+  "probe": "raft_large_ground_plane",
+  "claim": "capability-stratified WAM measurement; CCFC/FCS not yet formally populated",
+  "models": [
+    {
+      "model_id": "worlddrive_tadwm",
+      "capability": "native_action_conditioned",
+      "claimed_cells": [
+        "l1",
+        "a2f",
+        "f2a",
+        "ccfc",
+        "fcs"
+      ],
+      "cells": {
+        "l1": {
+          "status": "pilot",
+          "n": 5,
+          "lateral_mae_m": 0.3155,
+          "yaw_mae_rad": 0.0391,
+          "curvature_mae_1pm": 0.00816,
+          "reason": "native action-conditioned futures scored by frozen L1; not benchmark_v1 580"
+        },
+        "a2f": {
+          "status": "pass",
+          "n": 5,
+          "mean_left_right_image_l1": 0.0871,
+          "bootstrap_l1_lower_95": 0.0736,
+          "threshold": 0.005
+        },
+        "f2a": {
+          "status": "pilot",
+          "n": 25,
+          "material_pairs": "1/25",
+          "reason": "internal future-latent swap; sparse under frozen magnitude gate"
+        },
+        "ccfc": {
+          "status": "ineligible",
+          "reason": "no same-history semantic clear/risk native-action pair"
+        },
+        "fcs": {
+          "status": "ineligible",
+          "reason": "independent rollout not joined on generated futures"
+        }
+      }
+    },
+    {
+      "model_id": "drivewam_navsim",
+      "capability": "native_action_conditioned",
+      "claimed_cells": [
+        "l1",
+        "a2f",
+        "f2a",
+        "ccfc",
+        "fcs"
+      ],
+      "cells": {
+        "l1": {
+          "status": "missing",
+          "reason": "native 4-frame grid not yet mapped onto frozen 8-frame L1 main table"
+        },
+        "a2f": {
+          "status": "fail",
+          "n": 60,
+          "mean_left_right_image_l1": 0.000831,
+          "threshold": 0.005,
+          "reason": "external action injection does not move pixels"
+        },
+        "f2a": {
+          "status": "pass",
+          "n": 25,
+          "transplant_closer_to_source": 0.88,
+          "mean_trajectory_distance_reduction": 0.252,
+          "reason": "future-cache content transplant; not semantic CCFC"
+        },
+        "ccfc": {
+          "status": "ineligible",
+          "reason": "no semantic clear/risk pair; single future latent blocks time-reversal"
+        },
+        "fcs": {
+          "status": "ineligible",
+          "reason": "independent rollout not joined on generated futures"
+        }
+      }
+    },
+    {
+      "model_id": "epona_nuplan",
+      "capability": "externally_controlled_video",
+      "claimed_cells": [
+        "a2f"
+      ],
+      "cells": {
+        "l1": {
+          "status": "ineligible",
+          "reason": "not_claimed_by_capability"
+        },
+        "a2f": {
+          "status": "pilot",
+          "n": 5,
+          "mean_left_right_image_l1": 0.229,
+          "bootstrap_l1_lower_95": 0.131,
+          "threshold": 0.005,
+          "reason": "pose/yaw injection; not scene-disjoint; no native action head"
+        },
+        "f2a": {
+          "status": "ineligible",
+          "reason": "not_claimed_by_capability"
+        },
+        "ccfc": {
+          "status": "ineligible",
+          "reason": "not_claimed_by_capability"
+        },
+        "fcs": {
+          "status": "ineligible",
+          "reason": "not_claimed_by_capability"
+        }
+      }
+    },
+    {
+      "model_id": "driveva_navsim",
+      "capability": "native_action_conditioned",
+      "claimed_cells": [
+        "l1",
+        "a2f",
+        "f2a",
+        "ccfc",
+        "fcs"
+      ],
+      "cells": {
+        "l1": {
+          "status": "missing",
+          "reason": "joint generation not scored on benchmark_v1"
+        },
+        "a2f": {
+          "status": "fail",
+          "n": 5,
+          "mean_left_right_image_l1": 0.0034,
+          "bootstrap_l1_lower_95": 0.00205,
+          "threshold": 0.005
+        },
+        "f2a": {
+          "status": "missing",
+          "reason": "future-swap gate not run on benchmark_v1"
+        },
+        "ccfc": {
+          "status": "ineligible",
+          "reason": "a2f gate failed; cannot enter CCFC"
+        },
+        "fcs": {
+          "status": "ineligible",
+          "reason": "independent rollout not joined"
+        }
+      }
+    }
+  ]
+}

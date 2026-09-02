@@ -1,9 +1,0 @@
-{
-  "model_id": "epona_nuplan",
-  "native_action_head": false,
-  "external_trajectory_control": true,
-  "time_alignment": "continuous_resample",
-  "independent_rollout": false,
-  "native_time_grid_hz": 5,
-  "native_horizon_s": 4.0
-}
