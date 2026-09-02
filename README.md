@@ -14,6 +14,80 @@ curvature from an image sequence, then compares those signals with the WAM's
 future action/trajectory. It is a measurement layer, not a claim of causality
 by itself.
 
+## Method architecture: Level-1 → Level-3
+
+```mermaid
+flowchart TD
+    H[History images + ego state] --> W[WAM generates imagined future images]
+    W --> L1[Level-1 image-side probe]
+    L1 --> P[Continuous motion profile<br/>lateral motion · yaw rate · curvature]
+    P --> C[Compare with native action]
+    C --> L2[Level-2 CCFC<br/>counterfactual foresight consistency]
+    L2 --> R[Independent simulator rollout]
+    R --> S[Realized ego state + task success]
+    S --> L3[Level-3 FCS<br/>foresight-conditioned success]
+```
+
+The levels are cumulative but answer different questions:
+
+| Level | Design intent | Evidence boundary |
+|---|---|---|
+| **Level-1** | Establish a trustworthy, candidate-blind ruler for future motion | Image-derived motion agrees with an independent logged reference; this validates measurement, not WAM causality |
+| **Level-2 / CCFC** | Test whether changing the imagined future changes the native action in the corresponding way | Compare `Δ imagined motion` with `Δ native action` under fixed history/seed; this is the foresight→action bridge, not task success |
+| **Level-3 / FCS** | Test whether that consistency survives execution in the environment | Add an independent rollout, realized state and explicit task-success label; this is the causal-closure layer |
+
+### What Level-1 contains
+
+For each 4-history/8-future, 4-second window, the frozen probe uses:
+
+```text
+RAFT-Large forward/backward flow
+  → consistency checks and dynamic suppression
+  → calibrated ground-plane ego geometry
+  → camera intrinsics/extrinsics and distortion
+  → candidate-blind continuous decoder
+  → observability gate and abstention
+  → lateral motion, yaw rate and curvature posterior
+  → final comparison with action-waypoint kinematics
+```
+
+The action or waypoint is withheld from the image decoder and is read only at
+the final comparison stage. Absolute speed, acceleration and metric forward
+distance remain diagnostic in v1; the formal ruler is lateral motion, yaw rate,
+curvature, observability and coverage-risk.
+
+### What CCFC means
+
+**CCFC (Continuous Counterfactual Foresight Consistency)** measures whether a
+WAM's imagined future is action-relevant. With the same history, prompt, seed
+and nuisance settings, create paired interventions such as clear/risk or
+left/right:
+
+```text
+ΔP_F(t) = P_F,risk(t) − P_F,clear(t)
+ΔP_A(t) = P_A,risk(t) − P_A,clear(t)
+CCFC    = consistency(ΔP_F, ΔP_A)
+```
+
+The report includes direction, magnitude, temporal alignment and coverage.
+Wrong-identity and time-reversal controls test whether the response depends on
+future content and its order rather than on a cache-presence artefact.
+
+### What FCS means
+
+**FCS (Foresight-Conditioned Success)** asks whether the foresight–action link
+remains valid after the vehicle actually executes the action:
+
+```text
+imagined future → native action → independent simulator
+                                  → realized state → task success
+```
+
+The realized state must come from the simulator, never from the WAM waypoint.
+Missing task labels are `unavailable`, never zero. Thus FCS is not a prettier
+video score and not a planner score alone: it is the final execution-level
+check on the imagined-future/action chain.
+
 ## Release contents
 
 ```text

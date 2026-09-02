@@ -12,6 +12,76 @@ IAC（Imagined-future and Action Consistency）是一个用于评测世界动作
 中提取前向/横向运动、航向和曲率，再与 WAM 的未来动作或轨迹进行比较。它是
 可靠的测量层，但单独不能宣称已经证明因果一致性。
 
+## 方法架构：Level-1 → Level-3
+
+```mermaid
+flowchart TD
+    H[历史图像 + 自车状态] --> W[WAM 生成想象未来图像]
+    W --> L1[Level-1 图像侧探针]
+    L1 --> P[连续运动画像<br/>横向运动 · yaw rate · 曲率]
+    P --> C[与原生 action 比较]
+    C --> L2[Level-2 CCFC<br/>反事实前瞻一致性]
+    L2 --> R[独立模拟器闭环]
+    R --> S[实际自车状态 + 任务成功]
+    S --> L3[Level-3 FCS<br/>前瞻条件成功]
+```
+
+三层是递进关系，但回答的问题不同：
+
+| 层级 | 设计意图 | 证据边界 |
+|---|---|---|
+| **Level-1** | 建立可靠、候选盲的未来运动测量尺 | 图像测量与独立 logged 真值一致；验证测量器，不证明 WAM 因果性 |
+| **Level-2 / CCFC** | 检查想象未来变化是否带来相应的原生动作变化 | 固定历史/随机种子比较 `Δ 想象运动` 与 `Δ 原生动作`；这是前瞻→动作桥梁，不是任务成功率 |
+| **Level-3 / FCS** | 检查一致性在真实执行后是否仍然成立 | 加入独立 rollout、实际状态和任务成功标签；这是因果闭环层 |
+
+### Level-1 使用的技术
+
+对每个“4 帧历史 + 8 帧未来、4 秒”的窗口，冻结探针执行：
+
+```text
+RAFT-Large 前后向光流
+  → 前后向一致性与动态抑制
+  → 标定的地面平面自车几何
+  → 相机内参/外参与畸变
+  → 候选盲连续解码器
+  → 可观测性门与 abstention
+  → lateral motion、yaw rate、curvature 后验
+  → 最后才与 action waypoint 的运动学量比较
+```
+
+动作或 waypoint 不会进入图像解码器，只在最后比较阶段读取。v1 中绝对速度、
+加速度和米制前向距离仍是诊断项；正式测量尺是横向运动、yaw rate、曲率、
+可观测性和 coverage-risk。
+
+### CCFC 是什么
+
+**CCFC（Continuous Counterfactual Foresight Consistency，连续反事实前瞻一致性）**
+检验“想象未来是否真正参与了动作”。固定历史、提示、随机种子和其他干扰因素，
+构造成对的 clear/risk 或 left/right 干预：
+
+```text
+ΔP_F(t) = P_F,risk(t) − P_F,clear(t)
+ΔP_A(t) = P_A,risk(t) − P_A,clear(t)
+CCFC    = consistency(ΔP_F, ΔP_A)
+```
+
+报告方向、幅度、时间对齐和覆盖率；wrong-identity 与 time-reversal 对照用于检验
+响应是否依赖未来内容及其时间顺序，而不是仅仅因为 cache 存在。
+
+### FCS 是什么
+
+**FCS（Foresight-Conditioned Success，前瞻条件成功）**检验前瞻—动作一致性在
+车辆真正执行后是否仍然成立：
+
+```text
+想象未来 → 原生动作 → 独立模拟器
+                         → 实际状态 → 任务成功
+```
+
+实际状态必须由模拟器独立产生，不能直接使用 WAM waypoint。缺少任务标签时报告
+`unavailable`，不能记为 0 分。因此 FCS 不是视频质量分数，也不是单独的规划分数，
+而是对“想象未来—动作—执行”整条链的最终检验。
+
 ## 发布包结构
 
 ```text
