@@ -27,6 +27,23 @@ benchmark_release_v1/
 └── README_zh.md
 ```
 
+The role of each directory is fixed as follows:
+
+| Path | Role | Required for reproduction |
+|---|---|---|
+| `configs/` | Frozen image-side geometry configuration (`plane.json`) | Yes |
+| `datasets/` | Leakage-safe public manifests and split audits | Yes (metadata) |
+| `docs/` | Frozen protocol, dataset contract and main-table definitions | Yes (protocol) |
+| `scripts/` | Manifest builders, WAM-output audits and Level-1 scorers | Yes |
+| `src/iac_new/` | Reusable flow, geometry, posterior and scoring implementation | Yes |
+| `tests/` | Deterministic unit and protocol checks | Recommended |
+| `weights/` | Frozen RAFT-Large checkpoint, provenance and SHA-256 checksums | Yes for the default probe |
+| `pyproject.toml`, `VERSION` | Python package metadata and release identity | Yes |
+
+The package intentionally contains no raw camera frames, private paths, WAM
+checkpoints or generated experiment logs. Those inputs are mounted through the
+private manifest interface at evaluation time.
+
 Raw NAVSIM/Waymo frames, private absolute paths, WAM checkpoints and generated
 logs are deliberately excluded. They stay in the data storage area and are
 referenced through the manifest interface, which prevents accidental leakage
@@ -92,6 +109,42 @@ candidate-blind observability and coverage-risk. Speed is diagnostic only in
 v1; it is not a formal Level-1 score. This release does not claim CCFC or FCS:
 those require a separate paired WAM intervention package with generated future
 images and are outside the public v1 protocol.
+
+## Level-1 metric summary
+
+The following is the **new frozen `benchmark_v1` experiment**, evaluated on
+580 records (500 NAVSIM + 80 Waymo), with strict shape gating and shape
+fallback disabled. The reference is logged future ego state, so these numbers
+validate the image measurement layer; they are not WAM causal scores.
+
+| Metric | Result | Interpretation |
+|---|---:|---|
+| Non-stop shape coverage | **440/468 = 94.0%** | At least one shape interval is observable on most moving samples |
+| Stop recognition | **92/112 = 82.1%** | Stop is reported by the dedicated stop layer, not by a fake velocity estimate |
+| Lateral-speed MAE / within tolerance | **0.095 m/s / 98.4%** | Reliable lateral-motion amplitude (`0.50 m/s` tolerance) |
+| Yaw-rate MAE / within tolerance | **0.029 rad/s / 97.0%** | Reliable heading-change measurement (`0.15 rad/s` tolerance) |
+| Curvature MAE / within tolerance | **0.022 1/m / 86.1%** | Usable curvature measurement (`0.06 1/m` tolerance), with a heavier tail |
+| Turn-layer yaw increment | **Gate passed** (106/114 evaluable) | Future content improves over history, matched-shuffle and reversal controls |
+| Turn-layer curvature increment | **Gate passed** (106/114 evaluable) | Curvature uses the correct future and its temporal order |
+| Full-pool curvature increment | **Gate passed** | The curvature signal remains specific on the mixed benchmark pool |
+
+The formal Level-1 comparison therefore uses lateral motion, yaw rate and
+curvature. Absolute speed, acceleration and metric forward distance remain
+diagnostic only. The complete definitions, tolerances and bootstrap-gate
+wording are frozen in
+[`docs/LEVEL1_MAIN_TABLE_BENCHMARK_V1_ZH.md`](docs/LEVEL1_MAIN_TABLE_BENCHMARK_V1_ZH.md).
+
+### Reliability and long-tail diagnostics
+
+The 78-sample development audit is retained only to expose failure modes and
+coverage. It reports mean interval observability **77.2%**, fully observable
+sample rate **61.5%**, and overall core-pass rate **82.1%**. Strong turns are
+observable (interval coverage **100%**) but have only **40.0%** core-pass rate;
+the limitation is accumulated lateral error, not invisibility. On the
+scene-aware non-overlap 25-sample audit, core-pass rate is **88.0%** and
+interval coverage **58.5%**, but braking has only one sample. These diagnostics
+must not be merged into the frozen 580-record headline or used to claim
+causality.
 
 ## Dataset preparation
 

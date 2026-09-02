@@ -26,6 +26,22 @@ benchmark_release_v1/
 └── README_zh.md     中文文档
 ```
 
+各目录的职责是冻结的：
+
+| 路径 | 作用 | 复现是否需要 |
+|---|---|---|
+| `configs/` | 冻结的图像侧几何配置（`plane.json`） | 是 |
+| `datasets/` | 无泄漏公开 manifest 与 split 审计文件 | 是（元数据） |
+| `docs/` | 冻结的评测协议、数据契约和主表定义 | 是（协议） |
+| `scripts/` | manifest 构建、WAM 输出审计和 Level-1 scorer | 是 |
+| `src/iac_new/` | 光流、几何、后验与评分的可复用实现 | 是 |
+| `tests/` | 确定性的单元测试与协议测试 | 建议运行 |
+| `weights/` | 冻结 RAFT-Large 权重、来源和 SHA-256 校验和 | 是（默认探针） |
+| `pyproject.toml`、`VERSION` | Python 包元数据与发布版本标识 | 是 |
+
+包内明确不放置原始相机帧、私有绝对路径、WAM checkpoint 或生成日志。
+评测时通过私有 manifest 接口挂载这些输入。
+
 原始 NAVSIM/Waymo 图像、私有绝对路径、WAM checkpoint 和实验日志均未放入
 发布包。它们仍保存在数据存储区，并通过 manifest 接口在运行时挂载，以避免
 数据泄漏、版权问题和不必要的仓库膨胀。
@@ -79,6 +95,35 @@ python scripts/evaluate_continuous_motion_alignment.py \
 报告包括路径归一化后的横向、航向和曲率误差，候选盲可观测性以及 coverage-risk
 曲线。速度仅作诊断，在 v1 中不属于正式 Level-1 主指标。本发布版不宣称 CCFC 或
 FCS；它们需要单独的、包含成对 WAM 干预和生成未来图像的评测包，不属于公开 v1 协议。
+
+## Level-1 综合指标
+
+下面是**新冻结的 `benchmark_v1` 实验结果**：共 580 条记录（NAVSIM 500 +
+Waymo 80），使用严格形状门并关闭 shape fallback。参考值来自 logged future
+ego state，因此这些数字验证的是图像测量层，不是 WAM 因果分数。
+
+| 指标 | 结果 | 解释 |
+|---|---:|---|
+| 非停车形状覆盖 | **440/468 = 94.0%** | 大多数运动样本至少有一个形状区间可观测 |
+| 停车识别 | **92/112 = 82.1%** | 由独立停车层报告，不用虚假的速度估计替代 |
+| lateral-speed MAE / 容差内 | **0.095 m/s / 98.4%** | 横向运动幅度可靠（容差 `0.50 m/s`） |
+| yaw-rate MAE / 容差内 | **0.029 rad/s / 97.0%** | 航向变化可靠（容差 `0.15 rad/s`） |
+| curvature MAE / 容差内 | **0.022 1/m / 86.1%** | 曲率可用，但长尾误差更重（容差 `0.06 1/m`） |
+| 转弯层 yaw 增量 | **通过**（106/114 可评） | 相比 history、错未来和倒序对照，正确未来更好 |
+| 转弯层 curvature 增量 | **通过**（106/114 可评） | 曲率依赖正确 future 及其时间顺序 |
+| 全池 curvature 增量 | **通过** | 混合 benchmark 上仍保持增量特异性 |
+
+因此，正式 Level-1 比较使用 lateral motion、yaw rate 和 curvature。绝对速度、
+加速度以及米制前向距离仍只作诊断。完整定义、容差和 bootstrap gate 见
+[`docs/LEVEL1_MAIN_TABLE_BENCHMARK_V1_ZH.md`](docs/LEVEL1_MAIN_TABLE_BENCHMARK_V1_ZH.md)。
+
+### 可靠性与长尾诊断（开发集，不是正式主分）
+
+78 条开发审计用于暴露失败模式和覆盖率：平均区间可观测性 **77.2%**、全区间
+可观测样本率 **61.5%**、总体核心通过率 **82.1%**。强转弯的区间可观测性为
+**100%**，但核心通过率仅 **40.0%**，说明瓶颈是横向误差累积而不是“看不见”。
+scene-aware 非重叠 25 条审计的核心通过率为 **88.0%**、区间覆盖率 **58.5%**，
+但制动只有 1 条样本。这些诊断不能与 580 条正式主表合并，也不能用于宣称因果性。
 
 ## 数据准备
 
