@@ -8,6 +8,11 @@ future visual state 可以是直接生成的未来 RGB 帧，也可以是能够�
 稳定重建为 RGB 的未来 latent。我们不要求视频与动作由同一个 head 联合生成，
 也不要求模型提供 semantic clear/risk 或在部署时默认生成视频。
 
+冻结 benchmark 的参考轴是 4 秒、8 个时间点（0.5 Hz 间隔）。但 WAM 提交不被
+强制改写成 8 点：只要提供 **至少 4 个未来点并覆盖到约 4.0 s**，保留模型原生
+时间戳即可。DriveWAM 的原生 4 点、1 Hz 轴因此合规；评测器按时间戳对齐，不把
+插值点当作模型原生输出。
+
 ## 1. 最小准入条件
 
 每个样本必须能复现以下字段：
@@ -79,10 +84,20 @@ future-latent swap
 比较：
 
 ```text
-Δ imagined motion  ↔  Δ native action
+ΔP_F(t) = P_F,branch1(t) − P_F,branch0(t)
+ΔP_A(t) = P_A,branch1(t) − P_A,branch0(t)
+CCFC    = consistency(ΔP_F, ΔP_A)
 ```
 
 必须分别报告方向一致性、幅度一致性、时间对齐、coverage 和干预类型。
+
+两条硬规则：
+
+1. `stop` 样本只用于停车识别与 coverage，不进入 CFAC 的运动平均值；转弯、制动、
+   加速和巡航分别报告后再做分层汇总。
+2. 干预必须改变 WAM 的条件或输入，并重新生成 future visual 与 native action。
+   评测端直接注入、覆盖或替换 action 的实验只能记为 action-response 诊断，不能
+   记为 CCFC。
 
 * 两侧 future 与 action 都随干预改变：报告 `CCFC`，并将其作为主榜指标列；
 * 只有 future 表征改变 native action：报告 `F2A mechanism`；

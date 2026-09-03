@@ -36,7 +36,12 @@
         "fau_a": {"status": "pilot", "score": 0.73, "n": 562, "coverage": 0.9689},
         "fau": {"status": "pilot", "score": 0.6509, "n": 562, "coverage": 0.9689, "aggregation": "sqrt(fau_f*fau_a)"},
         "fcs": {"status": "pilot", "score": 0.8086, "n": 491, "coverage": 0.982, "environment": "NAVSIM-PDM static_cached_objects_compat"},
-        "coverage": {"status": "pilot", "n": 491, "total": 500}
+        "coverage": {"status": "pilot", "per_metric": {
+          "cfac": {"n": 578, "total": 580, "rate": 0.9966},
+          "ccfc": {"n": 357, "total": 580, "rate": 0.6155},
+          "fau": {"n": 562, "total": 580, "rate": 0.9689},
+          "fcs": {"n": 491, "total": 500, "rate": 0.982}
+        }}
       },
       "legacy_cells": {"a2f": {"status": "fail", "n": 60}, "f2a": {"status": "pass", "n": 25}}
     },

@@ -29,14 +29,12 @@ lineage rules and intervention taxonomy are defined in
 
 ```mermaid
 flowchart LR
-    I["输入<br/>4 帧历史图像 + 自车状态<br/>WAM：8 帧未来图像 / 4 秒<br/>相机标定"] --> A
+    I["输入<br/>4 帧历史图像 + 自车状态<br/>WAM：原生未来轴（≥4 点，覆盖 4 秒）<br/>相机标定"] --> A
     subgraph S1["STEP 1 · 图像侧测量"]
         A["RAFT-Large + 前后向一致性<br/>动态抑制 + 地面平面自车几何"]
-        N["光流 novelty<br/>不只是 dense flow：<br/>自车几何 + 候选盲 + abstention<br/>RAFT=位移 · UniDepth=尺度 · tracker=点关联"]
         O["输出 m_F(t)<br/>横向运动 · yaw · 曲率<br/>可观测性 / coverage-risk"]
         B["依据<br/>logged 自车状态 + history/shuffle/reversal 三门"]
         A --> O
-        N -.-> A
         B -.-> O
     end
     O --> D
@@ -70,7 +68,8 @@ The levels are cumulative but answer different questions:
 
 ### What Step 1 contains
 
-For each 4-history/8-future, 4-second window, the frozen probe uses:
+For each 4-second window, the frozen benchmark uses 4 history and 8 reference future
+frames; submitted WAM outputs retain their native future axis (at least 4 points):
 
 ```text
 RAFT-Large forward/backward flow
@@ -97,8 +96,8 @@ seed and nuisance settings, run two forwards with any supported intervention,
 such as left/right, slow/fast, command change or latent swap:
 
 ```text
-ΔP_F(t) = P_F,risk(t) − P_F,clear(t)
-ΔP_A(t) = P_A,risk(t) − P_A,clear(t)
+ΔP_F(t) = P_F,branch1(t) − P_F,branch0(t)
+ΔP_A(t) = P_A,branch1(t) − P_A,branch0(t)
 CCFC    = consistency(ΔP_F, ΔP_A)
 ```
 
@@ -109,8 +108,10 @@ clear/risk is useful but is not a hard requirement.
 
 ### What FCS means
 
-**FCS (Foresight-Conditioned Success)** asks whether the foresight–action link
-remains valid after the vehicle actually executes the action:
+**FCS (Foresight-Conditioned Success)** is a downstream execution metric. It
+feeds the WAM's submitted native action into an independent NAVSIM/PDM rollout
+and measures the realized task outcome; the rollout does **not** read the WAM's
+generated future images:
 
 ```text
 imagined future → native action → independent simulator
@@ -118,9 +119,9 @@ imagined future → native action → independent simulator
 ```
 
 The realized state must come from the simulator, never from the WAM waypoint.
-Missing task labels are `unavailable`, never zero. Thus FCS is not a prettier
-video score and not a planner score alone: it is the final execution-level
-check on the imagined-future/action chain.
+Missing task labels or an incompatible simulator are `unavailable`, never zero.
+FCS therefore must not be interpreted by itself as proof that the action was
+caused by the imagined future; CFAC/CCFC provide the visual-action evidence.
 
 ## Main leaderboard columns
 
@@ -179,10 +180,11 @@ and keeps the GitHub package portable.
 
 ## Frozen protocol
 
-- The private evaluation input contains four history frames (`t <= 0`) and
-  eight future frames at `0.5, …, 4.0 s`. The public manifests in this
-  repository do **not** contain future images; they contain only protocol
-  metadata and sanitised sample identity.
+- The frozen benchmark reference contains four history frames (`t <= 0`) and
+  eight future frames at `0.5, …, 4.0 s`. A WAM submission may retain its native
+  future axis as long as it has at least four points covering 4.0 s (DriveWAM's
+  four-point, 1 Hz axis is valid). The public manifests do **not** contain
+  future images; they contain only protocol metadata and sanitised identity.
 - Exact timestamps, camera intrinsics/extrinsics and distortion are required.
 - Scene/log groups are disjoint between benchmark and dev; split construction
   is deterministic and audited.
@@ -228,7 +230,6 @@ python scripts/evaluate_continuous_motion_alignment.py \
   --manifest <private_evaluation_manifest.jsonl> \
   --scores <decoder_scores.jsonl> \
   --reference-source action \
-  --require-eight-frame-four-second \
   --output <out_dir>
 ```
 

@@ -2,11 +2,9 @@ flowchart LR
     I["输入<br/>4 帧历史图像 + 自车状态<br/>WAM：8 帧未来图像 / 4 秒<br/>相机标定"] --> A
     subgraph S1["STEP 1 · 图像侧测量"]
         A["RAFT-Large + 前后向一致性<br/>动态抑制 + 地面平面自车几何"]
-        N["光流 novelty<br/>不只是 dense flow：<br/>自车几何 + 候选盲 + abstention<br/>RAFT=位移 · UniDepth=尺度 · tracker=点关联"]
         O["输出 m_F(t)<br/>横向运动 · yaw · 曲率<br/>可观测性 / coverage-risk"]
         B["依据<br/>logged 自车状态 + history/shuffle/reversal 三门"]
         A --> O
-        N -.-> A
         B -.-> O
     end
     O --> D

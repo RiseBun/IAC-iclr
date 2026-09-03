@@ -25,14 +25,12 @@ IAC（Imagined-future and Action Consistency）是一个用于评测世界动作
 
 ```mermaid
 flowchart LR
-    I["输入<br/>4 帧历史图像 + 自车状态<br/>WAM：8 帧未来图像 / 4 秒<br/>相机标定"] --> A
+    I["输入<br/>4 帧历史图像 + 自车状态<br/>WAM：原生未来轴（≥4 点，覆盖 4 秒）<br/>相机标定"] --> A
     subgraph S1["STEP 1 · 图像侧测量"]
         A["RAFT-Large + 前后向一致性<br/>动态抑制 + 地面平面自车几何"]
-        N["光流 novelty<br/>不只是 dense flow：<br/>自车几何 + 候选盲 + abstention<br/>RAFT=位移 · UniDepth=尺度 · tracker=点关联"]
         O["输出 m_F(t)<br/>横向运动 · yaw · 曲率<br/>可观测性 / coverage-risk"]
         B["依据<br/>logged 自车状态 + history/shuffle/reversal 三门"]
         A --> O
-        N -.-> A
         B -.-> O
     end
     O --> D
@@ -66,7 +64,8 @@ flowchart LR
 
 ### Step 1 使用的技术
 
-对每个“4 帧历史 + 8 帧未来、4 秒”的窗口，冻结探针执行：
+冻结 benchmark 参考轴是“4 帧历史 + 8 帧未来、4 秒”；提交的 WAM 输出保留
+原生未来轴（至少 4 点），探针按精确时间戳对齐：
 
 ```text
 RAFT-Large 前后向光流
@@ -91,8 +90,8 @@ RAFT-Large 前后向光流
 command 变化或 latent swap：
 
 ```text
-ΔP_F(t) = P_F,risk(t) − P_F,clear(t)
-ΔP_A(t) = P_A,risk(t) − P_A,clear(t)
+ΔP_F(t) = P_F,branch1(t) − P_F,branch0(t)
+ΔP_A(t) = P_A,branch1(t) − P_A,branch0(t)
 CCFC    = consistency(ΔP_F, ΔP_A)
 ```
 
@@ -102,8 +101,9 @@ clear/risk 有价值，但不是硬性条件。
 
 ### FCS 是什么
 
-**FCS（Foresight-Conditioned Success，前瞻条件成功）**检验前瞻—动作一致性在
-车辆真正执行后是否仍然成立：
+**FCS（Foresight-Conditioned Success，前瞻条件成功）**是下游执行指标：把 WAM
+提交的 native action 放入独立的 NAVSIM/PDM rollout，测量模拟器产生的实际任务
+结果；rollout **不读取** WAM 生成的未来图像：
 
 ```text
 想象未来 → 原生动作 → 独立模拟器
@@ -112,8 +112,9 @@ clear/risk 有价值，但不是硬性条件。
 
 实际状态必须由模拟器独立产生，不能直接使用 WAM waypoint。缺少任务标签时报告
 `unavailable`，不能记为 0 分。因此 FCS 不是视频质量分数，也不是单独的规划分数，
-而是对“想象未来—动作—执行”整条链的最终检验。没有兼容模拟器或任务标签时
-报告 `unavailable`，不能记为 0 分。
+而是对 native action 执行结果的独立检查。它本身不能证明动作由想象未来导致；
+这部分证据由 CFAC/CCFC 提供。没有兼容模拟器或任务标签时报告 `unavailable`，
+不能记为 0 分。
 
 ## 主榜指标
 
@@ -170,8 +171,10 @@ CCFC 是正式主榜列，但不是所有 WAM 的硬性准入条件。`missing` 
 
 ## 固定评测协议
 
-- 评测服务器上的私有输入包含 4 帧历史图像（`t <= 0`）和 8 帧未来图像。
-  本公开包中的 manifest **不包含未来图像**，只包含协议元数据和脱敏后的样本身份。
+- 冻结 benchmark 参考轴包含 4 帧历史图像（`t <= 0`）和 8 帧未来图像；WAM
+  提交可以保留原生未来轴，只要至少有 4 个点并覆盖到 4.0 秒（DriveWAM 的
+  4 点、1 Hz 轴合规）。本公开包中的 manifest **不包含未来图像**，只包含协议
+  元数据和脱敏后的样本身份。
 - 未来帧时间为 `0.5, 1.0, ..., 4.0 s`，必须保留精确时间戳。
 - 必须提供相机内参、外参和畸变参数。
 - benchmark 与 dev 按 scene/log group 隔离，构建过程确定性且有审计文件。
@@ -210,7 +213,6 @@ python scripts/evaluate_continuous_motion_alignment.py \
   --manifest <private_evaluation_manifest.jsonl> \
   --scores <decoder_scores.jsonl> \
   --reference-source action \
-  --require-eight-frame-four-second \
   --output <out_dir>
 ```
 

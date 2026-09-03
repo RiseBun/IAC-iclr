@@ -12,7 +12,9 @@ CCFC/FCS 是能力分层主榜列：模型支持就提交并计分，不支持�
 每个新提交必须同时提供：
 
 - 可复现的 native action；
-- future visual state：8 帧 RGB，或通过固定 decoder 重建出的 8 帧 RGB；
+- future visual state：至少 4 个未来点、覆盖约 4 秒的 RGB，或通过固定 decoder
+  重建出的对应 RGB；模型必须保留原生时间戳（冻结参考轴为 8 点，DriveWAM 的
+  原生 4 点/1 Hz 也接受）；
 - `history`、`condition/intervention`、精确时间戳、随机种子、model revision 和
   lineage。
 
@@ -22,7 +24,7 @@ latent-to-frame 重建协议。联合生成、共享 action/video head、semanti
 Step 1 RAFT 图像指标；只有 action 的模型不能进入本协议主格。
 
 当前 v1 脚本接口仍读取 `future_images` 路径。因此 latent 提交者应先用声明的
-decoder 和重建协议生成 8 个固定时间点的 RGB 文件，再在 JSONL 中填写这些路径，
+decoder 和重建协议生成与模型原生时间轴对应的 RGB 文件（至少 4 个点、覆盖 4 秒），再在 JSONL 中填写这些路径，
 同时保留上述 decoder 元数据供审计；评测脚本不会偷偷替换 decoder。
 
 下表中的 `externally_controlled_video`、`video_only`、`action_only` 是冻结试点和
@@ -49,14 +51,19 @@ decoder 和重建协议生成 8 个固定时间点的 RGB 文件，再在 JSONL 
 
 | 值 | 必须交 | 可打的格子 |
 |---|---|---|
-| `native_action_conditioned` | 8 帧生成未来 + native action `[8,3]` | CFAC（及兼容旧 L1/A→F/F→A）；CCFC、FAU、FCS 需额外证据 |
-| `externally_controlled_video` | 8 帧生成未来 + 外控轨迹；`action_source=external_control` | 仅 A→F |
-| `video_only` | 8 帧生成未来 | 无 IAC 主格 |
+| `native_action_conditioned` | ≥4 个未来点覆盖 4 秒 + 同轴 native action | CFAC（及兼容旧 L1/A→F/F→A）；CCFC、FAU、FCS 需额外证据 |
+| `externally_controlled_video` | ≥4 个未来点覆盖 4 秒 + 外控轨迹；`action_source=external_control` | 仅 A→F |
+| `video_only` | ≥4 个未来点覆盖 4 秒 | 无 IAC 主格 |
 | `action_only` | 仅动作 | 无 IAC 主格 |
 
 禁止字段：`realized_future_ego_state`、logged/oracle action 冒充 native。  
 CCFC 若要参评，另需同一 `counterfactual_group_id` 下两条 `branch_mode`，并固定
-history、seed、nuisance；`clear`/`risk` 只是可选示例。
+history、seed、nuisance；`clear`/`risk` 只是可选示例。干预必须改变模型的条件或
+输入并重新生成 future 与 native action；评测端不得在生成后直接注入、覆盖或替换
+action，再把结果声称为 CCFC。
+
+停车（`stratum=stop`）只进入独立停车识别和 coverage 报告，不进入 CFAC 的运动
+平均值；其余分层仍分别报告后再做 macro-average。
 
 ## 2. 评测服务器怎么跑
 
@@ -80,7 +87,6 @@ python scripts/evaluate_continuous_motion_alignment.py \
   --manifest <joined.jsonl> \
   --scores <decoder_scores.jsonl> \
   --reference-source action \
-  --require-eight-frame-four-second \
   --disable-shape-fallback \
   --output <l1_report.json>
 

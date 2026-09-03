@@ -19,7 +19,7 @@ Step 3 已在可运行的 NAVSIM 子集完成。我们把 DriveWAM 原生 4 秒�
 | FCS 95% Wilson CI | [0.7714, 0.8409] |
 | Waymo rows | 80，NAVSIM PDM **N/A** |
 
-因此当前可报告的是 **DriveWAM-FCS-NAVSIM = 0.8086（491 条）**，不是把 580 条强行填成一个分数。Waymo 没有对应的 NAVSIM PDM metric cache/地图接口，标记 N/A 而不是 0。
+因此当前可报告的是 **DriveWAM-FCS-NAVSIM = 0.8086（491 条）**，不是把 580 条强行填成一个分数。这里的 FCS 是 **native action 的独立 PDM 执行结果**：rollout 不读取 WAM 生成图像，不能单独证明动作由 imagined future 导致。Waymo 没有对应的 NAVSIM PDM metric cache/地图接口，标记 N/A 而不是 0。
 
 ## 分层结果
 
@@ -40,7 +40,7 @@ Step 3 已在可运行的 NAVSIM 子集完成。我们把 DriveWAM 原生 4 秒�
 3. 从四个 DriveWAM shard manifest 按全局顺序读取 native action，统一为 `[8,3]`、0.5–4.0 s。
 4. 使用 `PDMSimulator/BatchKinematicBicycleModel`，4.0 s horizon、0.1 s interval。
 5. 由 PDM scorer 计算 task score；`task_success = (score >= 0.5)`。
-6. 通过 `attach_counterfactual_rollouts.py` 的独立状态和 action-injection 校验后，生成可供后续 FAU/FCS 汇总的分支记录。
+6. 通过 `attach_counterfactual_rollouts.py` 的独立状态和模拟器 action-injection 校验后，生成可供 FAU/FCS 汇总的分支记录；该 injection 仅用于执行 native action，不是 CCFC 干预。
 
 ## 缺失项
 

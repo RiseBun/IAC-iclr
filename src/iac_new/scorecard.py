@@ -29,7 +29,7 @@ CLAIMED = {
 }
 
 STATUSES = ("pass", "fail", "pilot", "unavailable", "ineligible", "missing")
-OPTIONAL_CELLS = frozenset({"ccfc", "fau_f", "fau_a", "fau", "fcs"})
+OPTIONAL_CELLS = frozenset({"ccfc", "fau_f", "fau_a", "fau", "fcs", "coverage"})
 
 
 def claimed_cells(capability: str) -> tuple[str, ...]:
@@ -52,7 +52,7 @@ def validate_submission_row(
     row: dict[str, Any],
     *,
     public_ids: set[str],
-    expected_future_count: int = 8,
+    expected_future_count: int | None = None,
 ) -> list[str]:
     issues: list[str] = []
     sample_id = str(row.get("sample_id") or row.get("source_key") or "")
@@ -71,11 +71,17 @@ def validate_submission_row(
     times = np.asarray(row.get("future_times_s"), dtype=np.float64) if row.get("future_times_s") is not None else np.asarray([])
     needs_video = any(cell in claimed for cell in ("l1", "a2f", "f2a", "ccfc"))
     if needs_video:
+        count = len(images) if isinstance(images, list) else 0
+        if expected_future_count is not None:
+            valid_count = count == expected_future_count
+        else:
+            valid_count = count >= 4
         if row.get("future_images_source") != "wam_generated":
             issues.append("future_images_source_is_not_wam_generated")
-        if not isinstance(images, list) or len(images) != expected_future_count:
-            issues.append(f"future_images_must_have_{expected_future_count}_paths")
-        if times.shape != (expected_future_count,) or not np.all(np.isfinite(times)) or np.any(np.diff(times) <= 0.0):
+        if not valid_count:
+            expected = str(expected_future_count) if expected_future_count is not None else "at_least_4"
+            issues.append(f"future_images_must_have_{expected}_paths")
+        if times.shape != (count,) or not np.all(np.isfinite(times)) or np.any(np.diff(times) <= 0.0):
             issues.append("future_times_s_invalid")
         elif float(times[0]) <= 0.0 or not (3.95 <= float(times[-1]) <= 4.05):
             issues.append("future_times_s_does_not_cover_0p5_to_4p0_seconds")
@@ -84,7 +90,8 @@ def validate_submission_row(
         action = (row.get("action_condition") or {}).get("trajectory")
     action_array = np.asarray(action, dtype=np.float64) if action is not None else np.zeros((0, 3))
     if "l1" in claimed or "ccfc" in claimed or "f2a" in claimed:
-        if action_array.shape != (expected_future_count, 3) or not np.all(np.isfinite(action_array)):
+        action_count = len(images) if isinstance(images, list) else expected_future_count or 0
+        if action_array.shape != (action_count, 3) or not np.all(np.isfinite(action_array)):
             issues.append("native_action_trajectory_invalid")
         source = str(row.get("action_source") or "")
         if capability == "native_action_conditioned" and (
@@ -253,6 +260,15 @@ def frozen_pilot_scorecard() -> dict[str, Any]:
                     "n": 491,
                     "coverage": 0.982,
                     "environment": "NAVSIM-PDM static_cached_objects_compat",
+                },
+                "coverage": {
+                    "status": "pilot",
+                    "per_metric": {
+                        "cfac": {"n": 578, "total": 580, "rate": 0.9966},
+                        "ccfc": {"n": 357, "total": 580, "rate": 0.6155},
+                        "fau": {"n": 562, "total": 580, "rate": 0.9689},
+                        "fcs": {"n": 491, "total": 500, "rate": 0.982},
+                    },
                 },
             },
         ),
