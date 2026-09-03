@@ -43,13 +43,14 @@ v3 不再把“直行”当作默认主体，而是显式优先选择：
 - 停车比例：5.0%；
 - 转弯/加速/制动比例：65.0%；
 - 窗口内不重叠：通过；
+- 精确 NAVSIM metric cache：978/1000 已生成；22 条因路线/完整未来条件未通过 PDM cache，后续按 `N/A` 处理；
 - 每条记录：4 history + 8 future、0.5–4.0 秒、相机标定、真实未来状态（私有参考）。
 
 ## 下一步
 
-1. 对 v3 清单生成完整 NAVSIM metric cache；
-2. 用同一清单跑 DriveWAM native action 和 future image；
-3. 重新计算 Step 1、CFAC、FAU、FCS；
+1. 对 978 条可用 cache 样本跑 DriveWAM native action 和 future image；
+2. 重新计算 Step 1、CFAC、FAU、FCS；
+3. 诊断 22 条 cache 缺失样本，必要时补充替代窗口；
 4. 将公开提交格式剥离未来图像路径和私有 GT，只保留协议元数据。
 
 服务器产物：
