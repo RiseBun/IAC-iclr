@@ -49,13 +49,14 @@ decoder 和重建协议生成 8 个固定时间点的 RGB 文件，再在 JSONL 
 
 | 值 | 必须交 | 可打的格子 |
 |---|---|---|
-| `native_action_conditioned` | 8 帧生成未来 + native action `[8,3]` | L1、A→F、F→A、CCFC、FCS |
+| `native_action_conditioned` | 8 帧生成未来 + native action `[8,3]` | CFAC（及兼容旧 L1/A→F/F→A）；CCFC、FAU、FCS 需额外证据 |
 | `externally_controlled_video` | 8 帧生成未来 + 外控轨迹；`action_source=external_control` | 仅 A→F |
 | `video_only` | 8 帧生成未来 | 无 IAC 主格 |
 | `action_only` | 仅动作 | 无 IAC 主格 |
 
 禁止字段：`realized_future_ego_state`、logged/oracle action 冒充 native。  
-CCFC 另需同一 `counterfactual_group_id` 下两条 `branch_mode`（如 `clear`/`risk`）。
+CCFC 若要参评，另需同一 `counterfactual_group_id` 下两条 `branch_mode`，并固定
+history、seed、nuisance；`clear`/`risk` 只是可选示例。
 
 ## 2. 评测服务器怎么跑
 
