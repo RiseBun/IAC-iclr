@@ -1,16 +1,16 @@
-# IAC Benchmark · Level-1 发布版 v1
+# IAC Benchmark · 发布版 v1
 
 English version: [README.md](README.md)
 
-本 GitHub 分支**就是** Level-1 发布包：克隆后在仓库根目录执行
+本 GitHub 分支是可复现的 benchmark 发布包：克隆后在仓库根目录执行
 `pip install -e .`。研究笔记和旧 78 条工作区在 `main`，不属于本发布。
 
 IAC（Imagined-future and Action Consistency）是一个用于评测世界动作模型
 （WAM）的可复现基准，目标是检查模型想象的未来是否与其输出动作保持一致。
 
-本发布版提供 **Level-1 连续图像侧测量层**：使用候选盲的几何探针，从图像序列
-中提取前向/横向运动、航向和曲率，再与 WAM 的未来动作或轨迹进行比较。它是
-可靠的测量层，但单独不能宣称已经证明因果一致性。
+本发布版包含 **Step 1 连续图像侧测量层**，以及 Step 2/3 的提交和记分协议：
+使用候选盲的几何探针，从图像序列中提取前向/横向运动、航向和曲率，再与 WAM
+的未来动作或轨迹进行比较。它是可靠的测量层，但单独不能宣称已经证明因果一致性。
 
 ## 提交范围
 
@@ -36,8 +36,8 @@ flowchart LR
         B -.-> O
     end
     O --> D
-    subgraph S2["STEP 2 · 反事实一致性 CCFC"]
-        D["成对 clear/risk 或 left/right 干预<br/>固定历史 + 随机种子"]
+    subgraph S2["STEP 2 · 反事实一致性 CCFC（主榜可选列）"]
+        D["成对可重复干预：left/right、slow/fast、command 或 latent swap<br/>固定历史 + 随机种子"]
         C["比较 Δ 想象运动 ↔ Δ 原生动作"]
         Q["输出 CCFC<br/>方向 · 幅度 · 时间对齐 · 覆盖率"]
         E["依据<br/>候选盲解码 + 原生 lineage<br/>identity/time-order 对照"]
@@ -58,10 +58,10 @@ flowchart LR
 
 三层是递进关系，但回答的问题不同：
 
-| 层级 | 设计意图 | 证据边界 |
+| Step | 设计意图 | 证据边界 |
 |---|---|---|
 | **Step 1** | 建立可靠、候选盲的未来运动测量尺 | 图像测量与独立 logged 真值一致；验证测量器，不证明 WAM 因果性 |
-| **Step 2 / CCFC** | 检查想象未来变化是否带来相应的原生动作变化 | 固定历史/随机种子比较 `Δ 想象运动` 与 `Δ 原生动作`；这是前瞻→动作桥梁，不是任务成功率 |
+| **Step 2 / CCFC** | 检查干预引起的想象未来变化是否带来相应的原生动作变化 | 固定历史/随机种子比较 `Δ 想象运动` 与 `Δ 原生动作`；有能力时作为主榜列 |
 | **Step 3 / FCS** | 检查一致性在真实执行后是否仍然成立 | 加入独立 rollout、实际状态和任务成功标签；这是因果闭环层 |
 
 ### Step 1 使用的技术
@@ -86,8 +86,9 @@ RAFT-Large 前后向光流
 ### CCFC 是什么
 
 **CCFC（Continuous Counterfactual Foresight Consistency，连续反事实前瞻一致性）**
-检验“想象未来是否真正参与了动作”。固定历史、提示、随机种子和其他干扰因素，
-构造成对的 clear/risk 或 left/right 干预：
+检验可重复干预是否让“想象未来”和原生动作朝同一方向变化。固定历史、提示、
+随机种子和其他干扰因素，运行两次推理，干预可以是 left/right、slow/fast、
+command 变化或 latent swap：
 
 ```text
 ΔP_F(t) = P_F,risk(t) − P_F,clear(t)
@@ -96,7 +97,8 @@ CCFC    = consistency(ΔP_F, ΔP_A)
 ```
 
 报告方向、幅度、时间对齐和覆盖率；wrong-identity 与 time-reversal 对照用于检验
-响应是否依赖未来内容及其时间顺序，而不是仅仅因为 cache 存在。
+响应是否依赖未来内容及其时间顺序，而不是仅仅因为 cache 存在。semantic
+clear/risk 有价值，但不是硬性条件。
 
 ### FCS 是什么
 
@@ -110,7 +112,24 @@ CCFC    = consistency(ΔP_F, ΔP_A)
 
 实际状态必须由模拟器独立产生，不能直接使用 WAM waypoint。缺少任务标签时报告
 `unavailable`，不能记为 0 分。因此 FCS 不是视频质量分数，也不是单独的规划分数，
-而是对“想象未来—动作—执行”整条链的最终检验。
+而是对“想象未来—动作—执行”整条链的最终检验。没有兼容模拟器或任务标签时
+报告 `unavailable`，不能记为 0 分。
+
+## 主榜指标
+
+主榜按能力分层并列报告，不把不同能力强行平均，也不把缺失能力填成 0：
+
+| 指标 | 最小证据 | 不支持时 |
+|---|---|---|
+| **CFAC** | 单次 future visual 与 native action | `unavailable` |
+| **CCFC** | 固定 history/seed 的成对干预，比较 `ΔP_F` 与 `ΔP_A` | `unavailable` |
+| **FAU_F / FAU_A / FAU** | 想象、动作分别对私有 GT future；`FAU=√(FAU_F×FAU_A)` | `unavailable` |
+| **FCS** | 独立模拟器 rollout 与任务标签 | `unavailable` |
+| **Coverage** | 每个指标的有效样本数/总样本数 | 始终报告 |
+
+CCFC 是正式主榜列，但不是所有 WAM 的硬性准入条件。`missing` 表示模型声称
+具备能力但提交不完整；`ineligible` 仅表示违反硬协议；`unavailable` 表示模型
+本身没有该可选接口或评测环境不适配。
 
 ## 发布包结构
 
@@ -199,7 +218,8 @@ python scripts/evaluate_continuous_motion_alignment.py \
 曲线。速度仅作诊断，在 v1 中不属于正式 Step 1 主指标。CCFC 接受任意可重复的
 成对干预（如 left/right、slow/fast、command 变化或 latent swap），并报告干预
 类型。FCS 另需独立 rollout 和明确的任务成功标签。semantic clear/risk 很有价值但
-不是硬性条件；缺少前置条件时标记 `ineligible`，禁止填 0。
+不是硬性条件；不支持的可选列标记 `unavailable`，只有违反硬协议才标记
+`ineligible`，禁止填 0。
 
 ## 提交 WAM
 
@@ -215,8 +235,8 @@ python scripts/validate_wam_submission.py \
 python scripts/score_iac_submission.py --frozen-pilots --output scorecard.json
 ```
 
-官方试点记分板为 `datasets/scorecard_v1.json`。当前试点中的 CCFC/FCS 结果仍按
-实际干预和 rollout 证据填写；没有前置条件的格子保持 `ineligible`。
+官方试点记分板为 `datasets/scorecard_v1.json`。CCFC/FAU/FCS 结果按实际干预、
+私有 GT join 和 rollout 证据填写；没有前置条件的格子保持 `unavailable`。
 
 ## Step 1 综合指标
 

@@ -1,7 +1,9 @@
 """Capability-stratified IAC scorecard.
 
-Missing cells are ineligible or missing, never silently filled.
-Claimed-but-unmeasured cells stay missing until a measurement exists.
+Optional capabilities (CCFC, FAU and FCS) are reported as ``unavailable`` when a
+model does not expose the required interface.  ``missing`` is reserved for a
+claimed capability whose evidence is incomplete; ``ineligible`` is reserved for
+hard protocol violations.
 """
 
 from __future__ import annotations
@@ -17,16 +19,17 @@ CAPABILITIES = (
     "action_only",
 )
 
-CELLS = ("l1", "a2f", "f2a", "ccfc", "fcs")
+CELLS = ("l1", "a2f", "f2a", "cfac", "ccfc", "fau_f", "fau_a", "fau", "fcs", "coverage")
 
 CLAIMED = {
-    "native_action_conditioned": ("l1", "a2f", "f2a", "ccfc", "fcs"),
+    "native_action_conditioned": ("l1", "a2f", "f2a", "cfac"),
     "externally_controlled_video": ("a2f",),
     "video_only": (),
     "action_only": (),
 }
 
-STATUSES = ("pass", "fail", "pilot", "ineligible", "missing")
+STATUSES = ("pass", "fail", "pilot", "unavailable", "ineligible", "missing")
+OPTIONAL_CELLS = frozenset({"ccfc", "fau_f", "fau_a", "fau", "fcs"})
 
 
 def claimed_cells(capability: str) -> tuple[str, ...]:
@@ -130,9 +133,14 @@ def validate_submission(
     }
 
 
-def _cell_from_measurement(measurement: dict[str, Any] | None, claimed: bool) -> dict[str, Any]:
+def _cell_from_measurement(
+    measurement: dict[str, Any] | None,
+    claimed: bool,
+    cell_name: str,
+) -> dict[str, Any]:
     if not claimed:
-        return empty_cell("ineligible", reason="not_claimed_by_capability")
+        status = "unavailable" if cell_name in OPTIONAL_CELLS else "ineligible"
+        return empty_cell(status, reason="capability_not_declared")
     if not measurement:
         return empty_cell("missing", reason="no_measurement")
     status = str(measurement.get("status") or "missing")
@@ -150,7 +158,7 @@ def build_model_scorecard(
     claimed = claimed_cells(capability)
     measurements = measurements or {}
     cells = {
-        cell: _cell_from_measurement(measurements.get(cell), cell in claimed)
+        cell: _cell_from_measurement(measurements.get(cell), cell in claimed, cell)
         for cell in CELLS
     }
     return {
@@ -162,7 +170,7 @@ def build_model_scorecard(
 
 
 def frozen_pilot_scorecard() -> dict[str, Any]:
-    """Official v1 scoreboard: pilots on small n, CCFC/FCS ineligible."""
+    """Official v1 capability-stratified scoreboard with measured pilot cells."""
     models = [
         build_model_scorecard(
             model_id="worlddrive_tadwm",
@@ -189,12 +197,13 @@ def frozen_pilot_scorecard() -> dict[str, Any]:
                     "material_pairs": "1/25",
                     "reason": "internal future-latent swap; sparse under frozen magnitude gate",
                 },
+                "cfac": {"status": "unavailable", "reason": "benchmark_v1 CFAC measurement not frozen"},
                 "ccfc": {
-                    "status": "ineligible",
-                    "reason": "no same-history semantic clear/risk native-action pair",
+                    "status": "unavailable",
+                    "reason": "no reproducible paired intervention submitted",
                 },
                 "fcs": {
-                    "status": "ineligible",
+                    "status": "unavailable",
                     "reason": "independent rollout not joined on generated futures",
                 },
             },
@@ -206,6 +215,13 @@ def frozen_pilot_scorecard() -> dict[str, Any]:
                 "l1": {
                     "status": "missing",
                     "reason": "native 4-frame grid not yet mapped onto frozen 8-frame L1 main table",
+                },
+                "cfac": {
+                    "status": "pilot",
+                    "score": 0.4825,
+                    "dynamic_score": 0.4321,
+                    "n": 580,
+                    "coverage": 0.9966,
                 },
                 "a2f": {
                     "status": "fail",
@@ -219,15 +235,24 @@ def frozen_pilot_scorecard() -> dict[str, Any]:
                     "n": 25,
                     "transplant_closer_to_source": 0.88,
                     "mean_trajectory_distance_reduction": 0.252,
-                    "reason": "future-cache content transplant; not semantic CCFC",
+                    "reason": "legacy future-cache content transplant; retained as F2A diagnostic",
                 },
+                "fau_f": {"status": "pilot", "score": 0.61, "n": 562, "coverage": 0.9689},
+                "fau_a": {"status": "pilot", "score": 0.73, "n": 562, "coverage": 0.9689},
+                "fau": {"status": "pilot", "score": 0.6509, "n": 562, "coverage": 0.9689},
                 "ccfc": {
-                    "status": "ineligible",
-                    "reason": "no semantic clear/risk pair; single future latent blocks time-reversal",
+                    "status": "pilot",
+                    "score": 0.1235,
+                    "n": 357,
+                    "coverage": 0.6155,
+                    "intervention_type": "paired_command",
                 },
                 "fcs": {
-                    "status": "ineligible",
-                    "reason": "independent rollout not joined on generated futures",
+                    "status": "pilot",
+                    "score": 0.8086,
+                    "n": 491,
+                    "coverage": 0.982,
+                    "environment": "NAVSIM-PDM static_cached_objects_compat",
                 },
             },
         ),
@@ -259,12 +284,13 @@ def frozen_pilot_scorecard() -> dict[str, Any]:
                 "l1": {"status": "missing", "reason": "joint generation not scored on benchmark_v1"},
                 "f2a": {"status": "missing", "reason": "future-swap gate not run on benchmark_v1"},
                 "ccfc": {
-                    "status": "ineligible",
-                    "reason": "a2f gate failed; cannot enter CCFC",
+                    "status": "unavailable",
+                    "reason": "no reproducible paired intervention submitted",
                 },
+                "fau": {"status": "unavailable", "reason": "no private-GT joined measurement"},
                 "fcs": {
-                    "status": "ineligible",
-                    "reason": "independent rollout not joined",
+                    "status": "unavailable",
+                    "reason": "no compatible independent rollout submitted",
                 },
             },
         ),
@@ -273,6 +299,14 @@ def frozen_pilot_scorecard() -> dict[str, Any]:
         "protocol": "iac-scorecard-v1",
         "benchmark": "benchmark_v1",
         "probe": "raft_large_ground_plane",
-        "claim": "capability-stratified WAM measurement; CCFC/FCS not yet formally populated",
+        "claim": "capability-stratified WAM measurement; CCFC is an optional main leaderboard column",
+        "main_columns": ["cfac", "ccfc", "fau_f", "fau_a", "fau", "fcs", "coverage"],
+        "status_policy": {
+            "available": "measured and reproducible",
+            "pilot": "measured on a pilot or limited subset",
+            "unavailable": "optional interface or compatible evaluation environment is absent",
+            "missing": "the model claims the capability but the evidence is incomplete",
+            "ineligible": "a hard admission or leakage rule was violated",
+        },
         "models": models,
     }

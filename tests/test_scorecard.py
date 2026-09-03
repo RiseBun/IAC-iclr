@@ -37,12 +37,12 @@ class ScorecardTest(unittest.TestCase):
     def test_epona_does_not_claim_ccfc(self) -> None:
         self.assertEqual(claimed_cells("externally_controlled_video"), ("a2f",))
         card = build_model_scorecard(model_id="epona", capability="externally_controlled_video")
-        self.assertEqual(card["cells"]["ccfc"]["status"], "ineligible")
+        self.assertEqual(card["cells"]["ccfc"]["status"], "unavailable")
         self.assertEqual(card["cells"]["a2f"]["status"], "missing")
 
     def test_native_missing_cells_are_missing_not_zero(self) -> None:
         card = build_model_scorecard(model_id="x", capability="native_action_conditioned")
-        self.assertEqual(card["cells"]["ccfc"]["status"], "missing")
+        self.assertEqual(card["cells"]["ccfc"]["status"], "unavailable")
         self.assertNotIn("score", card["cells"]["ccfc"])
 
     def test_submission_must_match_public_ids(self) -> None:
@@ -64,12 +64,12 @@ class ScorecardTest(unittest.TestCase):
         )
         self.assertIn("realized_future_state_leakage", report["issues"][0]["issues"])
 
-    def test_frozen_pilots_do_not_invent_ccfc(self) -> None:
+    def test_frozen_pilots_report_ccfc_as_optional_main_cell(self) -> None:
         board = frozen_pilot_scorecard()
         self.assertEqual(board["protocol"], "iac-scorecard-v1")
-        for model in board["models"]:
-            self.assertIn(model["cells"]["ccfc"]["status"], {"ineligible", "missing"})
-            self.assertNotEqual(model["cells"]["ccfc"]["status"], "pass")
+        self.assertIn("ccfc", board["main_columns"])
+        self.assertEqual(board["models"][1]["cells"]["ccfc"]["status"], "pilot")
+        self.assertEqual(board["models"][0]["cells"]["ccfc"]["status"], "unavailable")
 
 
 class ScorecardScriptTest(unittest.TestCase):

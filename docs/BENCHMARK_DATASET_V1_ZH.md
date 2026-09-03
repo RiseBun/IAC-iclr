@@ -49,7 +49,8 @@ Waymo 当前源只有 100 条 scene-disjoint evaluation 窗口，且为了保证
 3. 样本 id 与 split。
 
 8 帧 future images、realized future state 和参考轨迹保留在评测服务器，用于计算
-Level-1；CCFC/FCS 属于需要额外成对 WAM 干预数据的后续协议，不在本公开 v1 包中实现。
+Step 1 与 FAU。CCFC 和 FCS 需要作者额外提交成对干预或独立 rollout；它们是主榜
+的能力分层列，但没有相应接口的模型标记 `unavailable`，不会被填成 0。
 
 ## 4. 分层不是标签装饰
 

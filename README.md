@@ -1,14 +1,15 @@
-# IAC Benchmark · Level-1 Release v1
+# IAC Benchmark · Release v1
 
 中文文档：[README_zh.md](README_zh.md)
 
-This GitHub branch **is** the Level-1 package: clone it and run
+This GitHub branch is the reproducible benchmark package: clone it and run
 `pip install -e .` from the repository root. Research notes and the old
 78-sample workspace live on `main`; they are not part of this release.
 
 IAC (Imagined-future and Action Consistency) is a reproducible benchmark for
 testing whether a WAM's imagined future is aligned with the action it emits.
-This release contains the **Level-1 continuous image-side measurement**: a
+The package contains the **Step 1 continuous image-side measurement** and the
+submission/scorecard contracts for Step 2 and Step 3: a
 candidate-blind geometry probe extracts forward/lateral motion, heading and
 curvature from an image sequence, then compares those signals with the WAM's
 future action/trajectory. It is a measurement layer, not a claim of causality
@@ -39,8 +40,8 @@ flowchart LR
         B -.-> O
     end
     O --> D
-    subgraph S2["STEP 2 · 反事实一致性 CCFC"]
-        D["成对 clear/risk 或 left/right 干预<br/>固定历史 + 随机种子"]
+    subgraph S2["STEP 2 · 反事实一致性 CCFC（主榜可选列）"]
+        D["成对可重复干预：left/right、slow/fast、command 或 latent swap<br/>固定历史 + 随机种子"]
         C["比较 Δ 想象运动 ↔ Δ 原生动作"]
         Q["输出 CCFC<br/>方向 · 幅度 · 时间对齐 · 覆盖率"]
         E["依据<br/>候选盲解码 + 原生 lineage<br/>identity/time-order 对照"]
@@ -61,10 +62,10 @@ Editable diagram source: [`docs/IAC_FROZEN_PIPELINE_V1.mmd`](docs/IAC_FROZEN_PIP
 
 The levels are cumulative but answer different questions:
 
-| Level | Design intent | Evidence boundary |
+| Step | Design intent | Evidence boundary |
 |---|---|---|
 | **Step 1** | Establish a trustworthy, candidate-blind ruler for future motion | Image-derived motion agrees with an independent logged reference; this validates measurement, not WAM causality |
-| **Step 2 / CCFC** | Test whether changing the imagined future changes the native action in the corresponding way | Compare `Δ imagined motion` with `Δ native action` under fixed history/seed; this is the foresight→action bridge, not task success |
+| **Step 2 / CCFC** | Test whether an intervention changes imagined motion and native action in the corresponding way | Compare `Δ imagined motion` with `Δ native action` under fixed history/seed; this is a main leaderboard column when available |
 | **Step 3 / FCS** | Test whether that consistency survives execution in the environment | Add an independent rollout, realized state and explicit task-success label; this is the causal-closure layer |
 
 ### What Step 1 contains
@@ -90,9 +91,10 @@ curvature, observability and coverage-risk.
 ### What CCFC means
 
 **CCFC (Continuous Counterfactual Foresight Consistency)** measures whether a
-WAM's imagined future is action-relevant. With the same history, prompt, seed
-and nuisance settings, create paired interventions such as clear/risk or
-left/right:
+reproducible intervention changes a WAM's imagined future and native action in
+the same direction and with compatible timing. With the same history, prompt,
+seed and nuisance settings, run two forwards with any supported intervention,
+such as left/right, slow/fast, command change or latent swap:
 
 ```text
 ΔP_F(t) = P_F,risk(t) − P_F,clear(t)
@@ -102,7 +104,8 @@ CCFC    = consistency(ΔP_F, ΔP_A)
 
 The report includes direction, magnitude, temporal alignment and coverage.
 Wrong-identity and time-reversal controls test whether the response depends on
-future content and its order rather than on a cache-presence artefact.
+future content and its order rather than on a cache-presence artefact. Semantic
+clear/risk is useful but is not a hard requirement.
 
 ### What FCS means
 
@@ -118,6 +121,22 @@ The realized state must come from the simulator, never from the WAM waypoint.
 Missing task labels are `unavailable`, never zero. Thus FCS is not a prettier
 video score and not a planner score alone: it is the final execution-level
 check on the imagined-future/action chain.
+
+## Main leaderboard columns
+
+The public scoreboard is capability-stratified. It does not average unavailable
+capabilities into zero or force every WAM to expose the same intervention API:
+
+| Column | Evidence | If unsupported |
+|---|---|---|
+| **CFAC** | single-run imagined motion vs native action | `unavailable` |
+| **CCFC** | paired intervention: `ΔP_F` vs `ΔP_A` | `unavailable` |
+| **FAU_F / FAU_A / FAU** | both imagined motion and action compared with private GT; `FAU=sqrt(FAU_F×FAU_A)` | `unavailable` |
+| **FCS** | independent simulator rollout and task label | `unavailable` |
+| **Coverage** | valid samples for each column | always reported |
+
+CCFC is a formal main metric, but optional. `missing` means a claimed capability
+has incomplete evidence; `ineligible` is reserved for a hard protocol violation.
 
 ## Release contents
 
@@ -219,7 +238,8 @@ v1; it is not a formal Step 1 score. CCFC accepts any reproducible paired
 intervention (for example left/right, slow/fast, command changes or latent
 swap) and reports the intervention type. FCS additionally requires an
 independent rollout and an explicit task-success label. Semantic clear/risk is
-valuable but optional; missing prerequisites remain `ineligible`, never zero.
+valuable but optional. Unsupported optional cells are `unavailable`; only hard
+protocol violations are `ineligible`.
 
 ## Submit a WAM
 
@@ -237,8 +257,9 @@ python scripts/score_iac_submission.py --frozen-pilots --output scorecard.json
 ```
 
 The official v1 board (`datasets/scorecard_v1.json`) records WorldDrive,
-DriveWAM, Epona and DriveVA as pilots or ineligible cells. It does not invent
-CCFC numbers.
+DriveWAM, Epona and DriveVA as capability-stratified pilots. CCFC/FAU/FCS cells
+are populated only when the required evidence exists; otherwise they are
+`unavailable`, never fabricated as zero.
 
 ## Step 1 metric summary
 

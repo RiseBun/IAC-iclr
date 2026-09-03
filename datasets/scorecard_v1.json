@@ -2,157 +2,71 @@
   "protocol": "iac-scorecard-v1",
   "benchmark": "benchmark_v1",
   "probe": "raft_large_ground_plane",
-  "claim": "capability-stratified WAM measurement; CCFC/FCS not yet formally populated",
+  "claim": "capability-stratified WAM measurement; CCFC is an optional main leaderboard column",
+  "main_columns": ["cfac", "ccfc", "fau_f", "fau_a", "fau", "fcs", "coverage"],
+  "status_policy": {
+    "available": "measured and reproducible",
+    "pilot": "measured on a pilot or limited subset",
+    "unavailable": "optional interface or compatible evaluation environment is absent",
+    "missing": "the model claims the capability but the evidence is incomplete",
+    "ineligible": "a hard admission or leakage rule was violated"
+  },
   "models": [
     {
       "model_id": "worlddrive_tadwm",
       "capability": "native_action_conditioned",
-      "claimed_cells": [
-        "l1",
-        "a2f",
-        "f2a",
-        "ccfc",
-        "fcs"
-      ],
       "cells": {
-        "l1": {
-          "status": "pilot",
-          "n": 5,
-          "lateral_mae_m": 0.3155,
-          "yaw_mae_rad": 0.0391,
-          "curvature_mae_1pm": 0.00816,
-          "reason": "native action-conditioned futures scored by frozen L1; not benchmark_v1 580"
-        },
-        "a2f": {
-          "status": "pass",
-          "n": 5,
-          "mean_left_right_image_l1": 0.0871,
-          "bootstrap_l1_lower_95": 0.0736,
-          "threshold": 0.005
-        },
-        "f2a": {
-          "status": "pilot",
-          "n": 25,
-          "material_pairs": "1/25",
-          "reason": "internal future-latent swap; sparse under frozen magnitude gate"
-        },
-        "ccfc": {
-          "status": "ineligible",
-          "reason": "no same-history semantic clear/risk native-action pair"
-        },
-        "fcs": {
-          "status": "ineligible",
-          "reason": "independent rollout not joined on generated futures"
-        }
-      }
+        "cfac": {"status": "unavailable", "reason": "benchmark_v1 CFAC measurement not frozen"},
+        "ccfc": {"status": "unavailable", "reason": "no reproducible paired intervention submitted"},
+        "fau_f": {"status": "unavailable", "reason": "private-GT joined report not frozen"},
+        "fau_a": {"status": "unavailable", "reason": "private-GT joined report not frozen"},
+        "fau": {"status": "unavailable", "reason": "private-GT joined report not frozen"},
+        "fcs": {"status": "unavailable", "reason": "independent rollout not joined on generated futures"},
+        "coverage": {"status": "pilot", "n": 580, "total": 580}
+      },
+      "legacy_cells": {"a2f": {"status": "pass", "n": 5}, "f2a": {"status": "pilot", "n": 25}}
     },
     {
       "model_id": "drivewam_navsim",
       "capability": "native_action_conditioned",
-      "claimed_cells": [
-        "l1",
-        "a2f",
-        "f2a",
-        "ccfc",
-        "fcs"
-      ],
       "cells": {
-        "l1": {
-          "status": "missing",
-          "reason": "native 4-frame grid not yet mapped onto frozen 8-frame L1 main table"
-        },
-        "a2f": {
-          "status": "fail",
-          "n": 60,
-          "mean_left_right_image_l1": 0.000831,
-          "threshold": 0.005,
-          "reason": "external action injection does not move pixels"
-        },
-        "f2a": {
-          "status": "pass",
-          "n": 25,
-          "transplant_closer_to_source": 0.88,
-          "mean_trajectory_distance_reduction": 0.252,
-          "reason": "future-cache content transplant; not semantic CCFC"
-        },
-        "ccfc": {
-          "status": "ineligible",
-          "reason": "no semantic clear/risk pair; single future latent blocks time-reversal"
-        },
-        "fcs": {
-          "status": "ineligible",
-          "reason": "independent rollout not joined on generated futures"
-        }
-      }
+        "cfac": {"status": "pilot", "score": 0.4825, "dynamic_score": 0.4321, "n": 580, "coverage": 0.9966},
+        "ccfc": {"status": "pilot", "score": 0.1235, "n": 357, "coverage": 0.6155, "intervention_type": "paired_command"},
+        "fau_f": {"status": "pilot", "score": 0.61, "n": 562, "coverage": 0.9689},
+        "fau_a": {"status": "pilot", "score": 0.73, "n": 562, "coverage": 0.9689},
+        "fau": {"status": "pilot", "score": 0.6509, "n": 562, "coverage": 0.9689, "aggregation": "sqrt(fau_f*fau_a)"},
+        "fcs": {"status": "pilot", "score": 0.8086, "n": 491, "coverage": 0.982, "environment": "NAVSIM-PDM static_cached_objects_compat"},
+        "coverage": {"status": "pilot", "n": 491, "total": 500}
+      },
+      "legacy_cells": {"a2f": {"status": "fail", "n": 60}, "f2a": {"status": "pass", "n": 25}}
     },
     {
       "model_id": "epona_nuplan",
       "capability": "externally_controlled_video",
-      "claimed_cells": [
-        "a2f"
-      ],
       "cells": {
-        "l1": {
-          "status": "ineligible",
-          "reason": "not_claimed_by_capability"
-        },
-        "a2f": {
-          "status": "pilot",
-          "n": 5,
-          "mean_left_right_image_l1": 0.229,
-          "bootstrap_l1_lower_95": 0.131,
-          "threshold": 0.005,
-          "reason": "pose/yaw injection; not scene-disjoint; no native action head"
-        },
-        "f2a": {
-          "status": "ineligible",
-          "reason": "not_claimed_by_capability"
-        },
-        "ccfc": {
-          "status": "ineligible",
-          "reason": "not_claimed_by_capability"
-        },
-        "fcs": {
-          "status": "ineligible",
-          "reason": "not_claimed_by_capability"
-        }
-      }
+        "cfac": {"status": "unavailable", "reason": "no native action head"},
+        "ccfc": {"status": "unavailable", "reason": "no native action head"},
+        "fau_f": {"status": "unavailable", "reason": "no native action head"},
+        "fau_a": {"status": "unavailable", "reason": "no native action head"},
+        "fau": {"status": "unavailable", "reason": "no native action head"},
+        "fcs": {"status": "unavailable", "reason": "no native action head"},
+        "coverage": {"status": "pilot", "n": 5, "total": 5}
+      },
+      "legacy_cells": {"a2f": {"status": "pilot", "n": 5}}
     },
     {
       "model_id": "driveva_navsim",
       "capability": "native_action_conditioned",
-      "claimed_cells": [
-        "l1",
-        "a2f",
-        "f2a",
-        "ccfc",
-        "fcs"
-      ],
       "cells": {
-        "l1": {
-          "status": "missing",
-          "reason": "joint generation not scored on benchmark_v1"
-        },
-        "a2f": {
-          "status": "fail",
-          "n": 5,
-          "mean_left_right_image_l1": 0.0034,
-          "bootstrap_l1_lower_95": 0.00205,
-          "threshold": 0.005
-        },
-        "f2a": {
-          "status": "missing",
-          "reason": "future-swap gate not run on benchmark_v1"
-        },
-        "ccfc": {
-          "status": "ineligible",
-          "reason": "a2f gate failed; cannot enter CCFC"
-        },
-        "fcs": {
-          "status": "ineligible",
-          "reason": "independent rollout not joined"
-        }
-      }
+        "cfac": {"status": "unavailable", "reason": "benchmark_v1 CFAC measurement not frozen"},
+        "ccfc": {"status": "unavailable", "reason": "no reproducible paired intervention submitted"},
+        "fau_f": {"status": "unavailable", "reason": "private-GT joined report not frozen"},
+        "fau_a": {"status": "unavailable", "reason": "private-GT joined report not frozen"},
+        "fau": {"status": "unavailable", "reason": "private-GT joined report not frozen"},
+        "fcs": {"status": "unavailable", "reason": "no compatible independent rollout submitted"},
+        "coverage": {"status": "pilot", "n": 5, "total": 5}
+      },
+      "legacy_cells": {"a2f": {"status": "fail", "n": 5}, "f2a": {"status": "missing"}}
     }
   ]
 }

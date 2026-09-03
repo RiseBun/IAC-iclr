@@ -4,7 +4,8 @@
 Step 1 探针和 `benchmark_v1` split 不变。新的统一准入是“future visual state +
 native action”；生成形式不设限，详见
 [`WAM_SCOPE_AND_UNIFIED_PROTOCOL_V1_ZH.md`](WAM_SCOPE_AND_UNIFIED_PROTOCOL_V1_ZH.md)。
-CCFC/FCS 在缺少对应证据时仍为 `ineligible`，不得填 0。
+CCFC/FCS 是能力分层主榜列：模型支持就提交并计分，不支持就标记
+`unavailable`，不得填 0。`ineligible` 只用于违反硬准入条件的提交。
 
 ## 0. 新提交的硬条件
 
@@ -91,16 +92,44 @@ python scripts/score_iac_submission.py \
 
 公开 manifest 不能单独打分。动作只在最后比较阶段读取。
 
-## 3. 记分板格子
+## 3. 主榜指标与能力状态
+
+主榜不把不同能力强行压成一个总分，而是并列展示以下列，并同时展示每列的
+`n`、coverage 和状态。这样没有成对干预的模型仍可报告 CFAC/FAU，不会因缺少
+CCFC 被判零分；但也不能把 `unavailable` 当作可比的低分。
+
+| 主榜列 | 回答的问题 | 最小证据 | 不支持时 |
+|---|---|---|---|
+| `CFAC` | 单次推理中，想象运动与 native action 是否一致 | 一条 future visual + 一条 native action | `unavailable` |
+| `CCFC` | 两次固定条件推理中，干预引起的想象变化与动作变化是否一致 | 同 history/seed/nuisance 的成对分支；干预类型显式记录 | `unavailable` |
+| `FAU_F` | 想象运动相对 history 是否接近私有 GT future | future visual + 私有 GT join | `unavailable` |
+| `FAU_A` | native action 相对 history 是否接近私有 GT future | native action + 私有 GT join | `unavailable` |
+| `FAU` | 想象与动作是否都接近真实未来 | `sqrt(FAU_F × FAU_A)` | `unavailable` |
+| `FCS` | native action 在独立执行中是否成功 | 兼容 simulator、realized state、task label | `unavailable` |
+
+`CCFC` 是正式主榜指标，但不是所有模型的硬性准入条件；排名时按能力列和
+coverage 分层报告，不对缺失列做零填充或未经校准的总平均。
+
+### 3.1 兼容的 CCFC 干预
+
+不要求 semantic clear/risk。只要可重复、可审计，以下任一种都可以：
+`left/right`、`slow/fast`、command 变化、future-latent swap。semantic 干预只是一种
+`intervention_type`，不是 CCFC 的唯一形式。
+
+## 4. 记分板格子（兼容旧字段）
 
 | 格 | 含义 | 过线 |
 |---|---|---|
 | `l1` | 生成未来 vs native action 的形状对齐 | 主表 MAE/容差 + 覆盖 |
 | `a2f` | 左/右或 clear/risk 图像是否随动作变 | bootstrap L1 下界 > 0.005 |
 | `f2a` | 干预未来表征后 native action 是否变 | 内容敏感，不是 zero 开关 |
-| `ccfc` | 同 history 语义双分支，Δimage↔Δaction | 正式 CCFC 合同 |
-| `fcs` | 再加独立 rollout | 需 `realized_future_ego_state` |
+| `ccfc` | 同 history 的任意可重复双分支，Δimage↔Δaction | 主榜 CCFC；缺少双分支则 `unavailable` |
+| `fau` | `sqrt(FAU_F × FAU_A)`，两侧都对私有 GT future | 主榜 FAU；缺 GT 则 `unavailable` |
+| `fcs` | 再加独立 rollout | 主榜 FCS；无兼容环境则 `unavailable` |
 
-未声称 = `ineligible`。声称但没测 = `missing`。小 n 已有结果 = `pilot`。禁止把 ineligible 写成 0 分。
+不具备某项可选能力 = `unavailable`；声称具备但材料不完整 = `missing`；违反硬准入
+= `ineligible`；小 n 已有结果 = `pilot`。禁止把这些状态写成 0 分。
 
-当前官方试点记分板：`datasets/scorecard_v1.json`（`python scripts/score_iac_submission.py --frozen-pilots`）。CCFC/FCS 全员 ineligible。
+当前官方试点记分板：`datasets/scorecard_v1.json`（`python scripts/score_iac_submission.py --frozen-pilots`）。
+试点中的 CCFC/FCS/FAU 是否可用按实际证据填写；没有证据的列标记
+`unavailable`，而不是伪造分数。

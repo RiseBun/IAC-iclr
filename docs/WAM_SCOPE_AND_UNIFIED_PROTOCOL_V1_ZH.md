@@ -65,7 +65,7 @@ future RGB（或 decoded latent）
 lateral motion、yaw rate、curvature，以及 observability 和 coverage-risk；绝对
 速度、加速度和米制前向距离保留为诊断项。
 
-### Step 2：Action–Future Consistency
+### Step 2：Action–Future Consistency（CCFC 主指标）
 
 对固定 history、prompt、seed 和 nuisance，提交任意一种可重复的成对干预，例如：
 
@@ -84,10 +84,11 @@ future-latent swap
 
 必须分别报告方向一致性、幅度一致性、时间对齐、coverage 和干预类型。
 
-* 两侧 future 与 action 都随干预改变：报告 `CCFC`；
+* 两侧 future 与 action 都随干预改变：报告 `CCFC`，并将其作为主榜指标列；
 * 只有 future 表征改变 native action：报告 `F2A mechanism`；
 * 只有 action 改变 future 图像：报告 `A→F response`；
-* 没有可重复干预：`ineligible`，不能填 0。
+* 没有可重复干预：该模型的 `CCFC` 为 `unavailable`，不能填 0，也不影响它报告
+  `CFAC`/`FAU` 等其它可用主榜列。
 
 semantic clear/risk 是一种高价值干预，但不是所有模型的硬性准入条件。
 
@@ -102,12 +103,13 @@ native action
 ```
 
 FCS 必须标注干预类型（例如 `FCS-command` 或 `FCS-semantic`）。缺少独立任务
-标签时记为 `unavailable`，不能把缺失当作失败分数。
+标签或兼容模拟器时记为 `unavailable`，不能把缺失当作失败分数。
 
 ## 3. 失败关闭与报告规则
 
 评测器对缺失字段、无法重建的 latent、未固定 seed 或 lineage 不完整的样本
-fail-closed：该样本对应格子为 `ineligible`，并记录原因。任何 Step 都不得用
+fail-closed：该样本对应格子为 `unavailable`，并记录原因；只有违反硬准入条件时才为
+`ineligible`。任何 Step 都不得用
 logged/oracle action 或 waypoint 冒充 native action，也不得用 waypoint 冒充
 realized state。
 

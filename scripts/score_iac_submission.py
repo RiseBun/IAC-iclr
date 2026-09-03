@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Build an IAC scorecard from a validated submission plus optional measurements.
+"""Build an IAC capability-stratified scorecard from a validated submission.
 
-Without decoder/alignment reports this writes capability cells as missing or
-ineligible. It never invents CCFC/FCS numbers.
+Optional CCFC/FAU/FCS cells are ``unavailable`` when their interface or evidence
+is absent; the scorer never invents numbers or converts absence into zero.
 """
 
 from __future__ import annotations

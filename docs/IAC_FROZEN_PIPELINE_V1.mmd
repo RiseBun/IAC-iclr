@@ -10,8 +10,8 @@ flowchart LR
         B -.-> O
     end
     O --> D
-    subgraph S2["STEP 2 · 反事实一致性 CCFC"]
-        D["成对 clear/risk 或 left/right 干预<br/>固定历史 + 随机种子"]
+    subgraph S2["STEP 2 · 反事实一致性 CCFC（主榜可选列）"]
+        D["成对可重复干预：left/right、slow/fast、command 或 latent swap<br/>固定历史 + 随机种子"]
         C["比较 Δ 想象运动 ↔ Δ 原生动作"]
         Q["输出 CCFC<br/>方向 · 幅度 · 时间对齐 · 覆盖率"]
         E["依据<br/>候选盲解码 + 原生 lineage<br/>identity/time-order 对照"]
