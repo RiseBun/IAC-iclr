@@ -138,15 +138,15 @@ def _cell_from_measurement(
     claimed: bool,
     cell_name: str,
 ) -> dict[str, Any]:
+    if measurement:
+        status = str(measurement.get("status") or "missing")
+        if status not in STATUSES:
+            raise ValueError(f"unknown status: {status}")
+        return {"status": status, **{k: v for k, v in measurement.items() if k != "status"}}
     if not claimed:
         status = "unavailable" if cell_name in OPTIONAL_CELLS else "ineligible"
         return empty_cell(status, reason="capability_not_declared")
-    if not measurement:
-        return empty_cell("missing", reason="no_measurement")
-    status = str(measurement.get("status") or "missing")
-    if status not in STATUSES:
-        raise ValueError(f"unknown measurement status: {status}")
-    return {"status": status, **{k: v for k, v in measurement.items() if k != "status"}}
+    return empty_cell("missing", reason="no_measurement")
 
 
 def build_model_scorecard(
