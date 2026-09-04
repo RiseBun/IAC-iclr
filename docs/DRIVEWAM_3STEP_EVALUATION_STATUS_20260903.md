@@ -22,9 +22,12 @@ DriveWAM 已经完成我们的三步评测链路：
 | Step 3 | native action → NAVSIM PDM 独立闭环 | FCS **0.8086**（397/491） | 491 / 500 NAVSIM | realized state 来自独立模拟器，不读取 WAM future image |
 
 补充的单次 580 条 native4 旧口径诊断：**CFAC 0.4825**，动态 CFAC 0.4321；**FAU
-0.6509**（562/580）。由于旧 CFAC 含未验证的纵向米制尺度，它们现在仅作为
-legacy diagnostic；正式 CFAC 需按形状/相对量重算。FAU 的纵向绝对量同样只作
-诊断，正式 FAU 需按形状/相对量重算；它们均不能替代 Step 3 的 FCS。
+0.6509**（562/580）。由于旧值含未验证的纵向米制尺度，它们现在仅作为
+legacy diagnostic。按新主分策略重算后，形状 CFAC（`primary_shape_composite`）为
+**0.7610（564/580）**，interval coverage 为 **0.6981**；主分只含
+lateral speed / yaw rate / curvature，relative/arc shape 作为尺度归一化辅助量。
+FAU 的旧纵向绝对量仍只作诊断，正式 FAU 需采用同样的形状/相对量协议；它不能替代
+Step 3 的 FCS。
 
 ### 各主榜列的独立 coverage
 
@@ -32,7 +35,7 @@ coverage 不是一个可以跨指标复用的分母，必须随指标单独报�
 
 | 主榜列 | 有效样本 | 总样本 | coverage |
 |---|---:|---:|---:|
-| CFAC | 578 | 580 | 0.9966 |
+| CFAC | 564 | 580 | 0.9724 |
 | CCFC | 357 | 580 | 0.6155 |
 | FAU | 562 | 580 | 0.9689 |
 | FCS | 491 | 500 NAVSIM | 0.9820 |

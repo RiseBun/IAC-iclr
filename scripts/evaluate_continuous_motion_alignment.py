@@ -901,8 +901,14 @@ def aggregate(
             "mean_wis_90": None,
             "intervals": 0,
         }
+    # The public benchmark uses an 8-knot 0.5--4.0 s axis, while a WAM may
+    # expose its native 4-knot 1--4 s axis.  Both are valid when the horizon
+    # is four seconds; the scorer must not reject native WAM outputs merely
+    # because they are not resampled to the public axis.
     target_protocol_ready = bool(
-        frame_counts == [8] and horizons and all(abs(value - 4.0) <= 0.05 for value in horizons)
+        frame_counts in ([4], [8])
+        and horizons
+        and all(abs(value - 4.0) <= 0.05 for value in horizons)
     )
     input_audit_ready = bool(records) and all(
         record.get("level1_input_audit", {}).get("ready") is True for record in records
@@ -1110,7 +1116,8 @@ def aggregate(
             "future_horizon_s_min": None if not horizons else float(min(horizons)),
             "future_horizon_s_max": None if not horizons else float(max(horizons)),
             "median_interval_s": None if not intervals else float(np.median(intervals)),
-            "meets_target_8_frames_4_seconds": target_protocol_ready,
+            "meets_target_8_frames_4_seconds": frame_counts == [8] and target_protocol_ready,
+            "meets_native_4_or_public_8_frame_protocol": target_protocol_ready,
         },
         "failure_boundary": (
             "A single branch cannot establish counterfactual causality; paired controlled interventions are required."

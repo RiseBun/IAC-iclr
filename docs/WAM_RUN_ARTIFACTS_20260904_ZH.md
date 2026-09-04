@@ -28,6 +28,11 @@
 WAM 的 native action 作为 `reference_source=action` 重新计算。结果文件为
 `reports/diagnostics/shape_relative_cfac.json`。
 
+随后已复用服务器上完整的 DriveWAM native4 导出，按新协议完成正式形状口径重算：
+`primary_shape_composite=0.7610`，564/580 条可评估，interval coverage=0.6981。
+该结果及逐样本 alignment 见 `docs/DRIVEWAM_NATIVE4_SHAPE_ALIGNMENT_20260904_ZH.md`；
+旧的 `CFAC=0.4825`、`FAU=0.6509` 仍仅作为 legacy longitudinal diagnostic。
+
 ## 2. 逐样本文件
 
 ### Level-1 / CFAC / FAU
