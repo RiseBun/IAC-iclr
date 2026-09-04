@@ -3,6 +3,7 @@ import unittest
 import numpy as np
 
 from iac_new.continuous_motion import (
+    compare_counterfactual_se2_consistency,
     compare_motion_profiles,
     compare_pose_profiles,
     history_only_motion_profile,
@@ -67,6 +68,38 @@ class ContinuousMotionTest(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertIn("se2_pose", result["metrics"])
         self.assertGreaterEqual(result["coverage"], 0.0)
+
+    def test_counterfactual_shape_priority_downweights_forward_scale(self) -> None:
+        def profile(x_values, y_values, heading_values, source):
+            return {
+                "source": source,
+                "rows": [
+                    {
+                        "time_s": float(index + 1),
+                        "progress_m": float(x),
+                        "lateral_offset_m": float(y),
+                        "heading_rad": float(h),
+                        "shape_status": "usable",
+                        "observability": 1.0,
+                    }
+                    for index, (x, y, h) in enumerate(zip(x_values, y_values, heading_values))
+                ],
+            }
+
+        clear_image = profile([0.0, 1.0], [0.0, 0.0], [0.0, 0.0], "image_only_candidate_blind_decoder")
+        risk_image = profile([0.0, 3.0], [0.0, 0.4], [0.0, 0.1], "image_only_candidate_blind_decoder")
+        clear_action = profile([0.0, 1.0], [0.0, 0.0], [0.0, 0.0], "native_action")
+        risk_action = profile([0.0, 1.5], [0.0, 0.4], [0.0, 0.1], "native_action")
+        metric = compare_counterfactual_se2_consistency(clear_image, risk_image, clear_action, risk_action)
+        shape_priority = compare_counterfactual_se2_consistency(
+            clear_image, risk_image, clear_action, risk_action, scale_mode="shape_priority"
+        )
+        self.assertLess(
+            shape_priority["metrics"]["translation_response"]["weighted_mae"],
+            metric["metrics"]["translation_response"]["mae"],
+        )
+        self.assertEqual(shape_priority["scale_mode"], "shape_priority")
+        self.assertAlmostEqual(shape_priority["normalization"]["longitudinal_weight"], 0.25)
 
 
 if __name__ == "__main__":

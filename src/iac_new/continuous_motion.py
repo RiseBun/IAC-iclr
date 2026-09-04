@@ -1459,6 +1459,7 @@ def compare_counterfactual_se2_consistency(
     risk_action: dict[str, Any],
     *,
     scale_mode: str = "metric",
+    longitudinal_weight: float = 0.25,
     minimum_translation_delta_m: float = 0.05,
     minimum_heading_delta_rad: float = 0.01,
     translation_tolerance_m: float = 0.50,
@@ -1472,8 +1473,8 @@ def compare_counterfactual_se2_consistency(
     times.  ``scale_free`` is a shape-only diagnostic; ``metric`` is the
     primary report because it retains metre/radian response magnitude.
     """
-    if scale_mode not in {"metric", "scale_free", "arc_relative"}:
-        raise ValueError("scale_mode must be metric, scale_free, or arc_relative")
+    if scale_mode not in {"metric", "scale_free", "arc_relative", "shape_priority"}:
+        raise ValueError("scale_mode must be metric, scale_free, arc_relative, or shape_priority")
     if any(
         not np.isfinite(value) or value < 0.0
         for value in (
@@ -1484,6 +1485,8 @@ def compare_counterfactual_se2_consistency(
         )
     ):
         raise ValueError("thresholds and tolerances must be finite and non-negative")
+    if not np.isfinite(longitudinal_weight) or longitudinal_weight <= 0.0 or longitudinal_weight > 1.0:
+        raise ValueError("longitudinal_weight must be finite and in (0, 1]")
     profiles = (clear_image, risk_image, clear_action, risk_action)
     lengths = {len(profile.get("rows") or []) for profile in profiles}
     if len(lengths) != 1 or not lengths or 0 in lengths:
@@ -1596,12 +1599,19 @@ def compare_counterfactual_se2_consistency(
     image_valid = image_response[valid_array]
     action_valid = action_response[valid_array]
 
-    translation_errors = np.linalg.norm(image_valid[:, :2] - action_valid[:, :2], axis=1)
+    translation_delta = image_valid[:, :2] - action_valid[:, :2]
+    axis_weights = np.asarray(
+        [longitudinal_weight, 1.0] if scale_mode == "shape_priority" else [1.0, 1.0],
+        dtype=np.float64,
+    )
+    translation_errors = np.linalg.norm(translation_delta, axis=1)
+    weighted_translation_errors = np.sqrt(np.sum(axis_weights[None, :] * translation_delta ** 2, axis=1))
     forward_errors = np.abs(image_valid[:, 0] - action_valid[:, 0])
     lateral_errors = np.abs(image_valid[:, 1] - action_valid[:, 1])
     heading_errors = np.abs(_wrapped_delta(image_valid[:, 2] - action_valid[:, 2]))
-    if scale_mode == "metric":
-        translation_scores = np.clip(1.0 - translation_errors / max(translation_tolerance_m, 1e-9), 0.0, 1.0)
+    if scale_mode in {"metric", "shape_priority"}:
+        score_errors = weighted_translation_errors if scale_mode == "shape_priority" else translation_errors
+        translation_scores = np.clip(1.0 - score_errors / max(translation_tolerance_m, 1e-9), 0.0, 1.0)
         heading_scores = np.clip(1.0 - heading_errors / max(heading_tolerance_rad, 1e-9), 0.0, 1.0)
     else:
         translation_scores = np.clip(1.0 - translation_errors, 0.0, 1.0)
@@ -1626,6 +1636,9 @@ def compare_counterfactual_se2_consistency(
     ):
         if not is_active:
             continue
+        if scale_mode == "shape_priority":
+            image_value = image_value * np.sqrt(axis_weights)
+            action_value = action_value * np.sqrt(axis_weights)
         denominator = float(np.linalg.norm(image_value) * np.linalg.norm(action_value))
         cosine = float(np.dot(image_value, action_value) / denominator) if denominator > 1e-9 else -1.0
         translation_direction.append((cosine + 1.0) / 2.0)
@@ -1644,6 +1657,9 @@ def compare_counterfactual_se2_consistency(
 
     response_matrix_image = image_valid.copy()
     response_matrix_action = action_valid.copy()
+    if scale_mode == "shape_priority":
+        response_matrix_image[:, :2] *= np.sqrt(axis_weights)[None, :]
+        response_matrix_action[:, :2] *= np.sqrt(axis_weights)[None, :]
     matrix_weights = np.sqrt(weight_array)[:, None]
     image_flat = (response_matrix_image * matrix_weights).reshape(-1)
     action_flat = (response_matrix_action * matrix_weights).reshape(-1)
@@ -1681,6 +1697,7 @@ def compare_counterfactual_se2_consistency(
         "metrics": {
             "translation_response": {
                 "mae": float(np.average(translation_errors, weights=weight_array)),
+                "weighted_mae": float(np.average(weighted_translation_errors, weights=weight_array)),
                 "forward_mae": float(np.average(forward_errors, weights=weight_array)),
                 "lateral_mae": float(np.average(lateral_errors, weights=weight_array)),
                 "direction_score": float(np.average(translation_direction, weights=translation_direction_weights)) if translation_direction else None,
@@ -1694,6 +1711,7 @@ def compare_counterfactual_se2_consistency(
             "response_temporal": {"cosine": temporal_cosine},
         },
         "normalization": {
+            "longitudinal_weight": float(longitudinal_weight),
             "translation_scale": float(translation_scale),
             "arc_scales": None if arc_scales is None else {
                 "image_clear": float(arc_scales[0]),

@@ -114,4 +114,28 @@ scale-free score = 0.8351
 3. 在 dev 集校准 metric 幅度，不在 benchmark-v1 上调参；
 4. 主榜继续同时报告 `CFAC/CCFC`、三项子分数和 coverage；
 5. 不把 `abstain` 改成 0，也不因为人工能看出动作就跳过量尺校验。
+## 7. 本轮纵向尺度降权诊断
 
+为回答“纵向识别较弱时是否把 CFAC/CCFC 压得过低”，新增了显式审计脚本 scripts/diagnose_cfac_ccfc_failures.py。它不覆盖冻结主榜，而是并列计算：
+
+- shape_score：只使用 lateral speed、yaw rate、curvature；
+- longitudinal_score：只使用 speed、acceleration，作为诊断；
+- shape_priority_score：形状归一化误差 + 0.25 × 纵向归一化误差。
+
+580 条已有结果的审计为：完整可评估 457/580；将 123 条 abstain 按零覆盖率计入时，平均 coverage 为 0.6278（仅在完整可评估样本上则为 0.7968）。形状诊断分数 0.8753，纵向诊断分数 0.6432，形状优先综合诊断分数 0.7968。主导失败为纵向尺度 177 条、coverage 51 条、形状残差 49 条，无明显失败 303 条。
+
+CCFC pilot 共 16 个配对组、48 个模式行：metric 0.2376，scale_free 0.8496，arc_relative 0.8293；最低子项为 magnitude 的行数 28/48。39/48 行的 scale_free - metric 至少 0.20，说明米制尺度是主要扣分源之一，但不等于模型已正确。
+
+脚本输出每个样本和每个区间的时间戳、状态、coverage、形状/纵向误差及主导原因，并保留原始 CFAC/CCFC 分数。核心函数已支持 shape_priority CCFC 重算（默认纵向轴权重 0.25）；本轮 CCFC 原始 JSON 未保存四条 SE(2) profile，因此只做子分/尺度差异审计，没有伪造新的 CCFC 总分。正式榜仍发布原始 metric、子分、coverage 和 abstain。
+
+复现：
+
+```bash
+python scripts/diagnose_cfac_ccfc_failures.py \\
+  --alignment <level1_strict.json> \\
+  --ccfc '<ccfc.json glob>' \\
+  --longitudinal-weight 0.25 \\
+  --output diagnostics/cfac_ccfc_failure_diagnosis.json
+```
+
+下一步应在独立 dev 集验证降权后的稳定性，再决定是否将 shape_priority 升为正式附加列；在此之前不修改冻结主榜分数或观测门槛。
