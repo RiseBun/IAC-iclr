@@ -1136,6 +1136,12 @@ def main() -> None:
     parser.add_argument("--longitudinal-calibration", type=Path)
     parser.add_argument("--pose-calibration", type=Path)
     parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path(__file__).resolve().parents[1] / "configs" / "plane.json",
+        help="frozen probe policy; primary score fields are read from score.primary_motion_fields",
+    )
+    parser.add_argument(
         "--pose-calibration-application-split",
         choices=("fit", "calibration", "evaluation"),
         default="evaluation",
@@ -1146,6 +1152,19 @@ def main() -> None:
         default="evaluation",
     )
     args = parser.parse_args()
+
+    config = json.loads(args.config.read_text(encoding="utf-8"))
+    score_policy = config.get("score") or {}
+    primary_fields = frozenset(score_policy.get("primary_motion_fields") or ())
+    diagnostic_fields = frozenset(score_policy.get("diagnostic_motion_fields") or ())
+    if not primary_fields or not primary_fields.issubset(set(MOTION_FIELDS)):
+        raise ValueError("config score.primary_motion_fields must be a non-empty subset of MOTION_FIELDS")
+    if not diagnostic_fields.issubset(set(MOTION_FIELDS)) or primary_fields & diagnostic_fields:
+        raise ValueError("config score diagnostic and primary motion fields must be disjoint MOTION_FIELDS subsets")
+    if score_policy.get("exclude_unreliable_metric_longitudinal") and not diagnostic_fields.issuperset(
+        {"speed_mps", "acceleration_mps2"}
+    ):
+        raise ValueError("unreliable longitudinal policy must keep speed and acceleration diagnostic")
 
     manifest = read_jsonl(args.manifest)
     scores = {str(row["sample_id"]): row for row in read_jsonl(args.scores)}
@@ -1250,6 +1269,7 @@ def main() -> None:
         comparison = compare_motion_profiles(
             imagined, reference, include_uncertain=args.include_uncertain,
             include_shape_uncertain=True,
+            primary_fields=primary_fields,
         )
         distance_alignment_metric = compare_distance_profiles(
             imagined, reference, scale_mode="metric", include_uncertain=args.include_uncertain,
@@ -1295,6 +1315,7 @@ def main() -> None:
         raw_comparison = compare_motion_profiles(
             raw_imagined, reference, include_uncertain=args.include_uncertain,
             include_shape_uncertain=True,
+            primary_fields=primary_fields,
         )
         longitudinal_behavior = compare_longitudinal_behavior(
             imagined,
@@ -1314,6 +1335,7 @@ def main() -> None:
             imagined,
             include_uncertain=args.include_uncertain,
             include_shape_uncertain=True,
+            primary_fields=primary_fields,
         )
         history_cv_comparison = compare_history_baseline(
             history_cv_profile,
@@ -1321,6 +1343,7 @@ def main() -> None:
             imagined,
             include_uncertain=args.include_uncertain,
             include_shape_uncertain=True,
+            primary_fields=primary_fields,
         )
         records.append({
             "sample_id": sample_id,

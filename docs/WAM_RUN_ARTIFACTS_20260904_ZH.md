@@ -20,6 +20,14 @@
 
 注意：当前服务器可找到的 CCFC 行级原始文件是 `command_eval25`（10 组）和 `command_5sample`（5 组）等 pilot，不是 357 条全量行级文件。因此不能把 pilot JSON 误称为 357/580 的逐样本原始表。
 
+### 形状重算审计
+
+基于已有 `logged_gt` Level-1 alignment 的形状候选重算结果为：`shape_cfac=0.8494`、
+`arc_relative_path_cosine=0.9760`、`relative_observable_curve_cosine=0.9820`，可评
+457/580。它验证的是图像测量层的上界，不是正式 WAM CFAC；正式 CFAC 必须使用同一
+WAM 的 native action 作为 `reference_source=action` 重新计算。结果文件为
+`reports/diagnostics/shape_relative_cfac.json`。
+
 ## 2. 逐样本文件
 
 ### Level-1 / CFAC / FAU

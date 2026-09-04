@@ -678,6 +678,7 @@ def _compare_profile_rows(
     include_shape_uncertain: bool | None = None,
     limits: dict[str, float],
     score_speed_posterior: bool,
+    primary_fields: frozenset[str],
 ) -> dict[str, Any]:
     predicted_rows = list(predicted_profile.get("rows") or [])
     action_rows = list(action_profile.get("rows") or [])
@@ -772,7 +773,7 @@ def _compare_profile_rows(
                 "count": int(len(errors)),
             }
             normalized.append(mae / limits[field])
-            if field in SHAPE_FIELDS:
+            if field in primary_fields:
                 primary_shape_normalized.append(mae / limits[field])
         else:
             metrics[field] = {"mae": None, "rmse": None, "within_tolerance": None, "count": 0}
@@ -812,9 +813,10 @@ def _compare_profile_rows(
         "primary_shape_composite": (
             None if not primary_shape_normalized else float(np.exp(-np.mean(primary_shape_normalized)))
         ),
+        "primary_motion_fields": sorted(primary_fields),
         "primary_shape_composite_definition": (
-            "exp(-mean(normalized MAE of lateral_speed_mps, yaw_rate_radps, curvature_1pm)); "
-            "speed_mps and acceleration_mps2 excluded"
+            "exp(-mean(normalized MAE over configured primary motion fields)); "
+            "unvalidated longitudinal fields are excluded by policy"
         ),
         "tolerances": limits,
         "per_interval": per_interval,
@@ -828,8 +830,14 @@ def compare_motion_profiles(
     include_uncertain: bool = False,
     include_shape_uncertain: bool | None = None,
     tolerances: dict[str, float] | None = None,
+    primary_fields: set[str] | frozenset[str] | None = None,
 ) -> dict[str, Any]:
-    """Compare image-derived and action-derived motion without text labels."""
+    """Compare image-derived and action-derived motion without text labels.
+
+    The formal composite uses only ``primary_fields``; longitudinal metric
+    fields remain available as diagnostics unless explicitly admitted by a
+    future protocol revision.
+    """
     if image_profile.get("source") not in IMAGE_PROFILE_SOURCES:
         raise ValueError("image_profile must be produced independently from action waypoints")
     result = _compare_profile_rows(
@@ -840,6 +848,7 @@ def compare_motion_profiles(
         include_shape_uncertain=include_shape_uncertain,
         limits=_comparison_limits(tolerances),
         score_speed_posterior=True,
+        primary_fields=frozenset(primary_fields or SHAPE_FIELDS),
     )
     return result | {
         "protocol": "continuous-foresight-action-alignment-v1",
@@ -1228,6 +1237,7 @@ def compare_history_baseline(
     include_uncertain: bool = False,
     include_shape_uncertain: bool | None = None,
     tolerances: dict[str, float] | None = None,
+    primary_fields: set[str] | frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Score a history-only null on exactly the image probe's eligible rows."""
     if history_profile.get("source") not in {
@@ -1245,6 +1255,7 @@ def compare_history_baseline(
         include_shape_uncertain=include_shape_uncertain,
         limits=_comparison_limits(tolerances),
         score_speed_posterior=False,
+        primary_fields=frozenset(primary_fields or SHAPE_FIELDS),
     )
     return result | {
         "protocol": "history-only-action-null-v1",
@@ -1260,6 +1271,7 @@ def compare_future_control(
     include_uncertain: bool = False,
     include_shape_uncertain: bool | None = None,
     tolerances: dict[str, float] | None = None,
+    primary_fields: set[str] | frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Score a corrupted/shuffled future on the target probe's eligible rows."""
     if control_profile.get("source") not in IMAGE_PROFILE_SOURCES:
@@ -1274,6 +1286,7 @@ def compare_future_control(
         include_shape_uncertain=include_shape_uncertain,
         limits=_comparison_limits(tolerances),
         score_speed_posterior=False,
+        primary_fields=frozenset(primary_fields or SHAPE_FIELDS),
     )
     return result | {
         "protocol": "future-specificity-control-v1",
@@ -1480,8 +1493,9 @@ def compare_counterfactual_se2_consistency(
     The response is defined as risk-minus-clear.  The image branch is required
     to be candidate-blind, so this function measures whether the action branch
     changes in the same direction, with a similar magnitude and at the same
-    times.  ``scale_free`` is a shape-only diagnostic; ``metric`` is the
-    primary report because it retains metre/radian response magnitude.
+    times.  ``scale_free`` and ``arc_relative`` are scale-normalized shape
+    diagnostics.  ``metric`` is retained only for longitudinal-scale auditing;
+    the formal shape-priority report uses ``shape_priority``.
     """
     if scale_mode not in {"metric", "scale_free", "arc_relative", "shape_priority"}:
         raise ValueError("scale_mode must be metric, scale_free, arc_relative, or shape_priority")

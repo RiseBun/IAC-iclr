@@ -127,9 +127,13 @@ scale-free score = 0.8351
 
 580 条已有结果的审计为：完整可评估 457/580；将 123 条 abstain 按零覆盖率计入时，平均 coverage 为 0.6278（仅在完整可评估样本上则为 0.7968）。形状诊断分数 0.8753，纵向诊断分数 0.6432，形状优先综合诊断分数 0.7968。主导失败为纵向尺度 177 条、coverage 51 条、形状残差 49 条，无明显失败 303 条。
 
+按形状/相对量重算的 Level-1 候选为：`shape_cfac=0.8494`、`arc_relative_path_cosine=0.9760`、
+`relative_observable_curve_cosine=0.9820`（457/580）。由于该 alignment 的参考源是
+`logged_gt`，它只能作为图像测量上界，不能冒充 DriveWAM 的正式 CFAC。
+
 CCFC pilot 共 16 个配对组、48 个模式行：metric 0.2376，scale_free 0.8496，arc_relative 0.8293；最低子项为 magnitude 的行数 28/48。39/48 行的 scale_free - metric 至少 0.20，说明米制尺度是主要扣分源之一，但不等于模型已正确。
 
-脚本输出每个样本和每个区间的时间戳、状态、coverage、形状/纵向误差及主导原因，并保留原始 CFAC/CCFC 分数。核心函数已支持 shape_priority CCFC 重算（默认纵向轴权重 0.25）；本轮 CCFC 原始 JSON 未保存四条 SE(2) profile，因此只做子分/尺度差异审计，没有伪造新的 CCFC 总分。正式榜仍发布原始 metric、子分、coverage 和 abstain。
+脚本输出每个样本和每个区间的时间戳、状态、coverage、形状/纵向误差及主导原因，并保留原始 CFAC/CCFC 分数。核心函数已支持 shape_priority CCFC 重算（默认纵向轴权重 0.25）；本轮 CCFC 原始 JSON 未保存四条 SE(2) profile，因此只做子分/尺度差异审计，没有伪造新的 CCFC 总分。正式榜不使用旧的 metric 主分，只发布通过可靠性门槛的形状/相对量，另列 legacy diagnostic、子分、coverage 和 abstain。
 
 复现：
 

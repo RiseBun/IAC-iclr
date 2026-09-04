@@ -18,7 +18,7 @@ DriveWAM 已经完成我们的三步评测链路：
 | Step | 测量对象 | 结果 | 有效分母 | 解释 |
 |---|---|---:|---:|---|
 | Step 1 | WAM future image → 冻结 RAFT-Large 探针 → `P_F` | 图像测量 coverage **0.9966** | 580 | 生成图像可被统一探针处理；不把作者提交的 imagined profile 当输入 |
-| Step 2 | paired command branches：`ΔP_F` ↔ `ΔP_A` | **CCFC 0.1235** | 357 / 580 | 仅对通过图像/动作配对质量门的分支计分；其余为 abstain |
+| Step 2 | paired command branches：`ΔP_F` ↔ `ΔP_A` | **CCFC 0.1235（旧口径，仅诊断）** | 357 / 580 | 米制幅度未通过可靠性门；正式 CCFC 待形状/相对量重算 |
 | Step 3 | native action → NAVSIM PDM 独立闭环 | FCS **0.8086**（397/491） | 491 / 500 NAVSIM | realized state 来自独立模拟器，不读取 WAM future image |
 
 补充的单次 580 条 native4 旧口径诊断：**CFAC 0.4825**，动态 CFAC 0.4321；**FAU
