@@ -759,6 +759,7 @@ def _compare_profile_rows(
         })
     metrics: dict[str, Any] = {}
     normalized = []
+    primary_shape_normalized = []
     for field in MOTION_FIELDS:
         errors = np.asarray(metric_errors[field], dtype=np.float64)
         weights = np.asarray(metric_weights[field], dtype=np.float64)
@@ -771,6 +772,8 @@ def _compare_profile_rows(
                 "count": int(len(errors)),
             }
             normalized.append(mae / limits[field])
+            if field in SHAPE_FIELDS:
+                primary_shape_normalized.append(mae / limits[field])
         else:
             metrics[field] = {"mae": None, "rmse": None, "within_tolerance": None, "count": 0}
     if posterior_rows:
@@ -806,6 +809,13 @@ def _compare_profile_rows(
         "speed_posterior_coverage": speed_posterior["empirical_coverage"],
         "experimental_composite": None if not normalized else float(np.exp(-np.mean(normalized))),
         "experimental_composite_status": "calibration_only_not_formal_score",
+        "primary_shape_composite": (
+            None if not primary_shape_normalized else float(np.exp(-np.mean(primary_shape_normalized)))
+        ),
+        "primary_shape_composite_definition": (
+            "exp(-mean(normalized MAE of lateral_speed_mps, yaw_rate_radps, curvature_1pm)); "
+            "speed_mps and acceleration_mps2 excluded"
+        ),
         "tolerances": limits,
         "per_interval": per_interval,
     }

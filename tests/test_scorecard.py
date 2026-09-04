@@ -64,12 +64,22 @@ class ScorecardTest(unittest.TestCase):
         )
         self.assertIn("realized_future_state_leakage", report["issues"][0]["issues"])
 
-    def test_frozen_pilots_report_ccfc_as_optional_main_cell(self) -> None:
+    def test_frozen_pilots_withdraw_unvalidated_metric_scores(self) -> None:
         board = frozen_pilot_scorecard()
         self.assertEqual(board["protocol"], "iac-scorecard-v1")
         self.assertIn("ccfc", board["main_columns"])
-        self.assertEqual(board["models"][1]["cells"]["ccfc"]["status"], "pilot")
+        self.assertEqual(board["models"][1]["cells"]["ccfc"]["status"], "missing")
         self.assertEqual(board["models"][0]["cells"]["ccfc"]["status"], "unavailable")
+
+    def test_primary_score_excludes_unvalidated_longitudinal_scale(self) -> None:
+        board = frozen_pilot_scorecard()
+        policy = board["primary_score_policy"]
+        self.assertEqual(policy["included_motion_fields"], ["lateral_speed_mps", "yaw_rate_radps", "curvature_1pm"])
+        self.assertEqual(policy["excluded_motion_fields"], ["speed_mps", "acceleration_mps2"])
+        self.assertTrue(policy["excluded_fields_are_diagnostic_only"])
+        drivewam = board["models"][1]["cells"]
+        self.assertNotIn("score", drivewam["cfac"])
+        self.assertIn("legacy_diagnostic_score", drivewam["cfac"])
 
 
 class ScorecardScriptTest(unittest.TestCase):

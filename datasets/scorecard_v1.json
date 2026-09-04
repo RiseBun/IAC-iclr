@@ -2,7 +2,15 @@
   "protocol": "iac-scorecard-v1",
   "benchmark": "benchmark_v1",
   "probe": "raft_large_ground_plane",
-  "claim": "capability-stratified WAM measurement; CCFC is an optional main leaderboard column",
+  "claim": "capability-stratified WAM measurement; primary scores use shape/relative motion only",
+  "primary_score_policy": {
+    "included_motion_fields": ["lateral_speed_mps", "yaw_rate_radps", "curvature_1pm"],
+    "excluded_motion_fields": ["speed_mps", "acceleration_mps2"],
+    "excluded_distance_mode": "metric_forward_displacement",
+    "included_distance_modes": ["relative_observable", "arc_relative"],
+    "reason": "longitudinal metric scale is not within the validated error budget",
+    "excluded_fields_are_diagnostic_only": true
+  },
   "main_columns": ["cfac", "ccfc", "fau_f", "fau_a", "fau", "fcs", "coverage"],
   "status_policy": {
     "available": "measured and reproducible",
@@ -30,11 +38,11 @@
       "model_id": "drivewam_navsim",
       "capability": "native_action_conditioned",
       "cells": {
-        "cfac": {"status": "pilot", "score": 0.4825, "dynamic_score": 0.4321, "n": 580, "coverage": 0.9966},
-        "ccfc": {"status": "pilot", "score": 0.1235, "n": 357, "coverage": 0.6155, "intervention_type": "paired_command"},
-        "fau_f": {"status": "pilot", "score": 0.61, "n": 562, "coverage": 0.9689},
-        "fau_a": {"status": "pilot", "score": 0.73, "n": 562, "coverage": 0.9689},
-        "fau": {"status": "pilot", "score": 0.6509, "n": 562, "coverage": 0.9689, "aggregation": "sqrt(fau_f*fau_a)"},
+        "cfac": {"status": "missing", "legacy_diagnostic_score": 0.4825, "dynamic_score": 0.4321, "n": 580, "coverage": 0.9966, "reason": "legacy CFAC includes unvalidated longitudinal metric scale; shape-only recomputation required"},
+        "ccfc": {"status": "missing", "legacy_diagnostic_score": 0.1235, "n": 357, "coverage": 0.6155, "intervention_type": "paired_command", "reason": "legacy metric magnitude includes unvalidated longitudinal scale; shape-only paired recomputation required"},
+        "fau_f": {"status": "missing", "legacy_diagnostic_score": 0.61, "n": 562, "coverage": 0.9689, "reason": "legacy FAU_F includes unvalidated longitudinal metric scale; shape/relative recomputation required"},
+        "fau_a": {"status": "missing", "legacy_diagnostic_score": 0.73, "n": 562, "coverage": 0.9689, "reason": "legacy FAU_A includes unvalidated longitudinal metric scale; shape/relative recomputation required"},
+        "fau": {"status": "missing", "legacy_diagnostic_score": 0.6509, "n": 562, "coverage": 0.9689, "aggregation": "sqrt(fau_f*fau_a)", "reason": "legacy FAU combines unvalidated longitudinal metric scale; shape/relative recomputation required"},
         "fcs": {"status": "pilot", "score": 0.8086, "n": 491, "coverage": 0.982, "environment": "NAVSIM-PDM static_cached_objects_compat"},
         "coverage": {"status": "pilot", "per_metric": {
           "cfac": {"n": 578, "total": 580, "rate": 0.9966},

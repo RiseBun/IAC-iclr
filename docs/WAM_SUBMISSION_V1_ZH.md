@@ -105,9 +105,14 @@ python scripts/score_iac_submission.py \
 `n`、coverage 和状态。这样没有成对干预的模型仍可报告 CFAC/FAU，不会因缺少
 CCFC 被判零分；但也不能把 `unavailable` 当作可比的低分。
 
+主评分只使用已通过误差预算的形状/相对量：`lateral_speed_mps`、`yaw_rate_radps`、
+`curvature_1pm`，以及归一化相对距离/弧长形状。`speed_mps`、`acceleration_mps2`
+和未归一化的前向米制位移不进入主分，只作为诊断列。任何指标未达到可靠性门槛时，
+必须从主分移除并标记为 `diagnostic_only`，不能用降权掩盖不可靠性。
+
 | 主榜列 | 回答的问题 | 最小证据 | 不支持时 |
 |---|---|---|---|
-| `CFAC` | 单次推理中，想象运动与 native action 是否一致 | 一条 future visual + 一条 native action | `unavailable` |
+| `CFAC` | 单次推理中，想象运动与 native action 的形状是否一致 | 一条 future visual + 一条 native action | `unavailable` |
 | `CCFC` | 两次固定条件推理中，干预引起的想象变化与动作变化是否一致 | 同 history/seed/nuisance 的成对分支；干预类型显式记录 | `unavailable` |
 | `FAU_F` | 想象运动相对 history 是否接近私有 GT future | future visual + 私有 GT join | `unavailable` |
 | `FAU_A` | native action 相对 history 是否接近私有 GT future | native action + 私有 GT join | `unavailable` |

@@ -49,6 +49,7 @@ class ContinuousMotionTest(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertAlmostEqual(result["metrics"]["yaw_rate_radps"]["mae"], 0.0, places=6)
         self.assertEqual(result["coverage"], 1.0)
+        self.assertIn("primary_shape_composite", result)
 
     def test_history_profile_is_past_only(self) -> None:
         profile = history_only_motion_profile(

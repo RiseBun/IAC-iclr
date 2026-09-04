@@ -67,8 +67,10 @@ future RGB（或 decoded latent）
 ```
 
 动作和 waypoint 只在最后比较阶段读取，不能进入图像解码器。正式主表使用
-lateral motion、yaw rate、curvature，以及 observability 和 coverage-risk；绝对
-速度、加速度和米制前向距离保留为诊断项。
+lateral motion、yaw rate、curvature，以及归一化相对距离/弧长形状和
+observability/coverage-risk；绝对速度、加速度和未归一化米制前向距离不进入主分，
+只保留为诊断项。若后续独立 dev 集证明纵向米制量达到误差预算，才允许新版本协议
+重新纳入，不能在当前版本中隐式恢复。
 
 ### Step 2：Action–Future Consistency（CCFC 主指标）
 

@@ -21,8 +21,10 @@ DriveWAM 已经完成我们的三步评测链路：
 | Step 2 | paired command branches：`ΔP_F` ↔ `ΔP_A` | **CCFC 0.1235** | 357 / 580 | 仅对通过图像/动作配对质量门的分支计分；其余为 abstain |
 | Step 3 | native action → NAVSIM PDM 独立闭环 | FCS **0.8086**（397/491） | 491 / 500 NAVSIM | realized state 来自独立模拟器，不读取 WAM future image |
 
-补充的单次 580 条 native4 诊断：**CFAC 0.4825**，动态 CFAC 0.4321；**FAU
-0.6509**（562/580）。这些数值用于主榜的 CFAC/FAU，不替代 Step 3 的 FCS。
+补充的单次 580 条 native4 旧口径诊断：**CFAC 0.4825**，动态 CFAC 0.4321；**FAU
+0.6509**（562/580）。由于旧 CFAC 含未验证的纵向米制尺度，它们现在仅作为
+legacy diagnostic；正式 CFAC 需按形状/相对量重算。FAU 的纵向绝对量同样只作
+诊断，正式 FAU 需按形状/相对量重算；它们均不能替代 Step 3 的 FCS。
 
 ### 各主榜列的独立 coverage
 

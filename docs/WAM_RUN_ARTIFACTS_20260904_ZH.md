@@ -13,9 +13,9 @@
 | 结果 | 数值 | 分母 | 产物 |
 |---|---:|---:|---|
 | Level-1 图像侧 coverage | 0.9966 | 578/580 | `level1_580/alignment.json` |
-| CFAC（单次 `P_F` vs `P_A`） | 0.4825 | 578/580 | `level1_580/alignment.json` |
-| CCFC（成对干预） | 0.1235 | 357/580（记分板口径） | `ccfc_pilot/` 中为可追溯 pilot 原始报告 |
-| FAU | 0.6509 | 562/580 | `level1_580/alignment.json` |
+| CFAC（单次 `P_F` vs `P_A`） | 0.4825（旧口径，仅诊断） | 578/580 | `level1_580/alignment.json` |
+| CCFC（成对干预） | 0.1235（旧口径，仅诊断） | 357/580（记分板口径） | `ccfc_pilot/` 中为可追溯 pilot 原始报告 |
+| FAU | 0.6509（旧口径，仅诊断） | 562/580 | `level1_580/alignment.json` |
 | FCS（NAVSIM-PDM） | 0.8086 | 397/491 | 见 `docs/DRIVEWAM_BENCHMARK580_STEP3_FCS_REPORT_20260903.md` |
 
 注意：当前服务器可找到的 CCFC 行级原始文件是 `command_eval25`（10 组）和 `command_5sample`（5 组）等 pilot，不是 357 条全量行级文件。因此不能把 pilot JSON 误称为 357/580 的逐样本原始表。
@@ -141,4 +141,3 @@ WorldDrive 生成 pilot CCFC 报告的原始启动命令没有保存在当前仓
 ```powershell
 scp -r iac:/mnt/slurmfs-4090node3/user_data/zchen897/wam_repro/artifact_bundle_20260904 C:\Users\LPN19\Desktop\iac\artifact_bundle_20260904
 ```
-
