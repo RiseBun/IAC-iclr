@@ -7,11 +7,20 @@ OUT="/mnt/slurmfs-4090node3/user_data/zchen897/benchmark_v3_drivewam_outputs_new
 RUNNER="/mnt/slurmfs-4090node1/homes/zchen897/iac_new/scripts/run_drivewam_native_batch.py"
 CHECKPOINT="/mnt/slurmfs-4090node1/homes/zchen897/model_registry/wam/drivewam/navsim"
 CONDA="/mnt/slurmfs-4090node1/homes/zchen897/miniforge3/etc/profile.d/conda.sh"
-DL_PID="${DL_PID:-4159529}"
+DL_PIDS="${DL_PIDS:-4159529 4182886 4183964 4183965 4183966}"
+DL_LOGS="${DL_LOGS:-/mnt/slurmfs-4090node3/user_data/zchen897/model_registry/lingbot_va_base/dl_transformer1.log /mnt/slurmfs-4090node3/user_data/zchen897/model_registry/lingbot_va_base/dl_text2.log /mnt/slurmfs-4090node3/user_data/zchen897/model_registry/lingbot_va_base/dl_vae.log}"
 
-echo "waiting for LingBot-VA downloader pid ${DL_PID}" >&2
-while kill -0 "$DL_PID" 2>/dev/null; do
+echo "waiting for LingBot-VA downloader pids ${DL_PIDS}" >&2
+while true; do
+  active=0
+  for pid in $DL_PIDS; do
+    if kill -0 "$pid" 2>/dev/null; then active=1; fi
+  done
+  [[ "$active" == 0 ]] && break
   sleep 30
+done
+for log in $DL_LOGS; do
+  grep -q '^done:' "$log" || { echo "download did not complete: $log" >&2; exit 5; }
 done
 
 declare -A SIZES=(
