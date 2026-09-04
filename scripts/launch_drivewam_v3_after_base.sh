@@ -5,7 +5,7 @@ BASE="/mnt/slurmfs-4090node3/user_data/zchen897/model_registry/lingbot_va_base"
 PART="/mnt/slurmfs-4090node3/user_data/zchen897/benchmark_v3_drivewam_partition"
 OUT="/mnt/slurmfs-4090node3/user_data/zchen897/benchmark_v3_drivewam_outputs_new"
 RUNNER="/mnt/slurmfs-4090node1/homes/zchen897/iac_new/scripts/run_drivewam_native_batch.py"
-CHECKPOINT="/mnt/slurmfs-4090node1/homes/zchen897/model_registry/wam/drivewam/navsim"
+CHECKPOINT="/mnt/slurmfs-4090node1/homes/zchen897/work_dirs/drivewam_runtime_smoke"
 CONDA="/mnt/slurmfs-4090node1/homes/zchen897/miniforge3/etc/profile.d/conda.sh"
 DL_PIDS="${DL_PIDS:-4159529 4182886 4183964 4183965 4183966}"
 DL_LOGS="${DL_LOGS:-/mnt/slurmfs-4090node3/user_data/zchen897/model_registry/lingbot_va_base/dl_transformer1.log /mnt/slurmfs-4090node3/user_data/zchen897/model_registry/lingbot_va_base/dl_text2.log /mnt/slurmfs-4090node3/user_data/zchen897/model_registry/lingbot_va_base/dl_vae.log}"
@@ -38,7 +38,12 @@ for rel in "${!SIZES[@]}"; do
   actual=$(stat -c '%s' "$path")
   [[ "$actual" == "${SIZES[$rel]}" ]] || { echo "size mismatch $path: $actual != ${SIZES[$rel]}" >&2; exit 3; }
 done
+BASE_URL="https://hf-mirror.com/robbyant/lingbot-va-base/resolve/main"
 for rel in transformer/config.json transformer/diffusion_pytorch_model.safetensors.index.json text_encoder/config.json text_encoder/model.safetensors.index.json tokenizer/special_tokens_map.json tokenizer/spiece.model tokenizer/tokenizer.json tokenizer/tokenizer_config.json vae/config.json; do
+  if [[ ! -s "$BASE/$rel" ]]; then
+    mkdir -p "$(dirname "$BASE/$rel")"
+    curl -fL --retry 5 --connect-timeout 20 "$BASE_URL/$rel" -o "$BASE/$rel"
+  fi
   [[ -s "$BASE/$rel" ]] || { echo "missing metadata $BASE/$rel" >&2; exit 4; }
 done
 
