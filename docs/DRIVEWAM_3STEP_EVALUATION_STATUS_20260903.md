@@ -18,16 +18,16 @@ DriveWAM 已经完成我们的三步评测链路：
 | Step | 测量对象 | 结果 | 有效分母 | 解释 |
 |---|---|---:|---:|---|
 | Step 1 | WAM future image → 冻结 RAFT-Large 探针 → `P_F` | 图像测量 coverage **0.9966** | 580 | 生成图像可被统一探针处理；不把作者提交的 imagined profile 当输入 |
-| Step 2 | paired command branches：`ΔP_F` ↔ `ΔP_A` | **CCFC 0.1235（旧口径，仅诊断）** | 357 / 580 | 米制幅度未通过可靠性门；正式 CCFC 待形状/相对量重算 |
-| Step 3 | native action → NAVSIM PDM 独立闭环 | FCS **0.8086**（397/491） | 491 / 500 NAVSIM | realized state 来自独立模拟器，不读取 WAM future image |
+| Step 2 | paired command branches：`ΔP_F` ↔ `ΔP_A` | **CCFC metric 0.1235（诊断）**；arc_relative **0.2234** | 357 / 580 | 正式主分尚未改默认；全量 arc_relative 仍偏低，主因是 direction/temporal≈0.25，不只是米制幅度 |
+| Step 3 | native action → NAVSIM PDM 独立闭环 | FCS **0.8086**（397/491） | 491 / 500 NAVSIM | realized state 来自独立模拟器，不读取 WAM future image；FCS 不使用光流探针 |
 
-补充的单次 580 条 native4 旧口径诊断：**CFAC 0.4825**，动态 CFAC 0.4321；**FAU
-0.6509**（562/580）。由于旧值含未验证的纵向米制尺度，它们现在仅作为
-legacy diagnostic。按新主分策略重算后，形状 CFAC（`primary_shape_composite`）为
-**0.7610（564/580）**，interval coverage 为 **0.6981**；主分只含
-lateral speed / yaw rate / curvature，relative/arc shape 作为尺度归一化辅助量。
-FAU 的旧纵向绝对量仍只作诊断，正式 FAU 需采用同样的形状/相对量协议；它不能替代
-Step 3 的 FCS。
+单次 native4：**形状 CFAC（正式 pilot）`primary_shape_composite`=0.7610（564/580）**，
+interval coverage **0.6981**，字段仅 lateral / yaw / curvature。  
+旧 **CFAC=0.4825** 也是这三字段，但是
+`(direction × magnitude × temporal)^(1/3)` 几何平均，不是“混进了速度”；含纵向米制的是
+`experimental_composite≈0.60`，仅诊断。新旧 CFAC **不可直接比高低**。  
+**FAU=0.6509（562/580）** 的 components 同样已是三形状量（相对私有 GT / history residual）；
+当前 `missing` 是因为尚未按新 CFAC 聚合口径重新冻结，不是因为 FAU 含 speed。FAU 不能替代 FCS。
 
 ### 各主榜列的独立 coverage
 
@@ -54,10 +54,20 @@ FCS 的 491/500 不能被写成整个 benchmark 的 coverage；Waymo 80 条在�
 ## Step 2：CCFC
 
 CCFC 是成对干预条件下 `Δ imagined motion` 与 `Δ native action` 的一致性，不要求
-clear/risk，也不声称语义因果。DriveWAM 的 command-paired 实验已跑通，正式记录
-方向、幅度、时间对齐和 coverage，得到 **0.1235（357/580）**；由于转弯生成图像
-质量和配对质量门，其余样本明确 abstain。单次、不含干预的 **CFAC=0.4825**，
-不能与 CCFC 混称。
+clear/risk，也不声称语义因果。DriveWAM command-paired 全量报告在
+`.../benchmark_v1_drivewam_ccfc_eval_native4/ccfc_command_report.json`（580 组，
+可评分 357）。三种已存模式均值为：
+
+| scale_mode | mean score | n |
+|---|---:|---:|
+| metric（当前默认/旧主分） | 0.1235 | 357 |
+| scale_free | 0.1861 | 357 |
+| arc_relative | 0.2234 | 357 |
+
+metric 下 forward_mae ≫ lateral_mae，米制前向确实拖分；但 **arc_relative 的
+direction/temporal 均值仍约 0.25**，说明全量成对一致性即使去掉整体尺度也不高。
+小 pilot（约 16 组）上看到的高 direction **不能外推到 357**。  
+单次形状 CFAC=0.7610 与 CCFC 不可混称。
 
 ## Step 3：FCS
 

@@ -13,12 +13,14 @@
 | 结果 | 数值 | 分母 | 产物 |
 |---|---:|---:|---|
 | Level-1 图像侧 coverage | 0.9966 | 578/580 | `level1_580/alignment.json` |
-| CFAC（单次 `P_F` vs `P_A`） | 0.4825（旧口径，仅诊断） | 578/580 | `level1_580/alignment.json` |
-| CCFC（成对干预） | 0.1235（旧口径，仅诊断） | 357/580（记分板口径） | `ccfc_pilot/` 中为可追溯 pilot 原始报告 |
-| FAU | 0.6509（旧口径，仅诊断） | 562/580 | `level1_580/alignment.json` |
+| 形状 CFAC（正式 pilot） | 0.7610 | 564/580 | native4 `native_action_alignment_shape_v1.json` |
+| 旧 CFAC（dir×mag×temp 公式，仅诊断） | 0.4825 | 580 | `drivewam_cfac_fau_native4_report.json` |
+| CCFC metric / arc_relative | 0.1235 / 0.2234 | 357/580 | **全量** `.../ccfc_eval_native4/ccfc_command_report.json` |
+| FAU（三形状量 vs 私有 GT） | 0.6509 | 562/580 | 同上 CFAC/FAU report；待与新 CFAC 聚合口径对齐后冻结 |
 | FCS（NAVSIM-PDM） | 0.8086 | 397/491 | 见 `docs/DRIVEWAM_BENCHMARK580_STEP3_FCS_REPORT_20260903.md` |
 
-注意：当前服务器可找到的 CCFC 行级原始文件是 `command_eval25`（10 组）和 `command_5sample`（5 组）等 pilot，不是 357 条全量行级文件。因此不能把 pilot JSON 误称为 357/580 的逐样本原始表。
+注意：357/580 全量 CCFC 行级文件**已找到**（`ccfc_command_report.json`，含 metric /
+scale_free / arc_relative）。`ccfc_pilot/` 仍只是小样本对照，不能替代全量表。
 
 ### 形状重算审计
 
@@ -30,8 +32,9 @@ WAM 的 native action 作为 `reference_source=action` 重新计算。结果文�
 
 随后已复用服务器上完整的 DriveWAM native4 导出，按新协议完成正式形状口径重算：
 `primary_shape_composite=0.7610`，564/580 条可评估，interval coverage=0.6981。
-该结果及逐样本 alignment 见 `docs/DRIVEWAM_NATIVE4_SHAPE_ALIGNMENT_20260904_ZH.md`；
-旧的 `CFAC=0.4825`、`FAU=0.6509` 仍仅作为 legacy longitudinal diagnostic。
+详见 `docs/DRIVEWAM_NATIVE4_SHAPE_ALIGNMENT_20260904_ZH.md`。  
+旧 CFAC=0.4825 是同三字段的更严公式（dir×mag×temp），不是纵向米制分；含纵向的诊断列是
+`experimental_composite`。FAU=0.6509 的 components 已是形状量，缺的是与新聚合口径对齐冻结。
 
 ## 2. 逐样本文件
 

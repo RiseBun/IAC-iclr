@@ -46,6 +46,18 @@ v3 不再把“直行”当作默认主体，而是显式优先选择：
 - 精确 NAVSIM metric cache：978/1000 已生成；22 条因路线/完整未来条件未通过 PDM cache，后续按 `N/A` 处理；
 - 每条记录：4 history + 8 future、0.5–4.0 秒、相机标定、真实未来状态（私有参考）。
 
+## 当前执行状态（2026-09-04）
+
+协议审计已完成。服务器上的私有 manifest 已补齐 `sample_id` 及统一字段别名
+（`history_frame_paths`、`future_frame_paths`、`intrinsics`、`distortion`），
+并重新生成审计文件。选集本身为 1000/1000；PDM metric cache 为 978/1000，
+缺失 22 条按 `unavailable` 处理，原因和处理边界见
+[`BENCHMARK_V3_PROTOCOL_AUDIT_20260904_ZH.md`](BENCHMARK_V3_PROTOCOL_AUDIT_20260904_ZH.md)。
+
+DriveWAM 的 v3 输入正在有空间的存储节点生成。v1 的 580 条生成图和动作不会复用
+为 v3 结果；所有 v3 数字必须带有独立的生成 manifest、模型 revision、seed 和
+lineage。
+
 ## 下一步
 
 1. 对 978 条可用 cache 样本跑 DriveWAM native action 和 future image；

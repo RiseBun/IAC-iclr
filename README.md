@@ -1,4 +1,4 @@
-# IAC Benchmark · Release v1
+# IAC Benchmark · benchmark-v3
 
 中文文档：[README_zh.md](README_zh.md)
 
@@ -8,7 +8,9 @@ This GitHub branch is the reproducible benchmark package: clone it and run
 
 IAC (Imagined-future and Action Consistency) is a reproducible benchmark for
 testing whether a WAM's imagined future is aligned with the action it emits.
-The package contains the **Step 1 continuous image-side measurement** and the
+The current main benchmark is **benchmark-v3: 1,000 NAVSIM records**. Waymo is
+retained as an external-generalization set and is excluded from the main
+denominator. The package contains the **Step 1 continuous image-side measurement** and the
 submission/scorecard contracts for Step 2 and Step 3: a
 candidate-blind geometry probe extracts forward/lateral motion, heading and
 curvature from an image sequence, then compares those signals with the WAM's
@@ -180,6 +182,14 @@ and keeps the GitHub package portable.
 
 ## Frozen protocol
 
+The current main board is `benchmark-v3`: 1,000 NAVSIM windows, straight-cruise
+ capped at 30%, stop capped at 5%, and 65% combined lateral-turn/acceleration/
+braking cases. It has 675 scene groups and a minimum 12-frame separation between
+windows in one scene. See
+[`docs/BENCHMARK_V3_PROTOCOL_AUDIT_20260904_ZH.md`](docs/BENCHMARK_V3_PROTOCOL_AUDIT_20260904_ZH.md)
+for quotas, cache audit and the 978/1000 Step-3 execution boundary. Waymo is
+external generalization only.
+
 - The frozen benchmark reference contains four history frames (`t <= 0`) and
   eight future frames at `0.5, …, 4.0 s`. A WAM submission may retain its native
   future axis as long as it has at least four points covering 4.0 s (DriveWAM's
@@ -188,9 +198,8 @@ and keeps the GitHub package portable.
 - Exact timestamps, camera intrinsics/extrinsics and distortion are required.
 - Scene/log groups are disjoint between benchmark and dev; split construction
   is deterministic and audited.
-- Current internal freeze: 500 NAVSIM + 80 Waymo benchmark records and
-  250 NAVSIM + 20 Waymo dev records (580/270 total). The Waymo expansion is
-  continuing outside this release; it will become v2 after audit.
+- The former 580-record v1 pool (500 NAVSIM + 80 Waymo) is a historical pilot;
+  the current main denominator is the 1,000-record all-NAVSIM v3 pool.
 - Strata include stop, braking, acceleration, lateral-turn and straight-cruise
   so performance is not dominated by straight driving.
 
@@ -261,12 +270,12 @@ The official v1 board (`datasets/scorecard_v1.json`) records WorldDrive,
 DriveWAM, Epona and DriveVA as capability-stratified pilots. CCFC/FAU/FCS cells
 are populated only when the required evidence exists; otherwise they are
 `unavailable`, never fabricated as zero.
-The previous DriveWAM CFAC/CCFC/FAU values used an unvalidated metric
-longitudinal scale and remain as `legacy_diagnostic_score` for audit. The
-native4 shape-only CFAC is now measured as **0.7610 (564/580, interval coverage
-0.6981)**. The formal score uses lateral, yaw, curvature, and relative/arc-length
-shape; CCFC and FAU remain unavailable until their corresponding paired/GT
-shape reports are recomputed.
+DriveWAM shape CFAC pilot is **0.7610 (564/580, interval coverage 0.6981)** on
+lateral/yaw/curvature only. Legacy CFAC 0.4825 used the same three fields with a
+dir×mag×temp geometric mean, not longitudinal speed. Full CCFC remains
+metric=0.1235 / arc_relative=0.2234 (357/580) until the default primary is
+switched. FAU 0.6509 already uses shape components vs private GT and is held as
+`missing` only until its aggregation is frozen to the new CFAC policy.
 
 ## Step 1 metric summary
 

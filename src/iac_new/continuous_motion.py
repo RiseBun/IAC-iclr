@@ -1493,9 +1493,9 @@ def compare_counterfactual_se2_consistency(
     The response is defined as risk-minus-clear.  The image branch is required
     to be candidate-blind, so this function measures whether the action branch
     changes in the same direction, with a similar magnitude and at the same
-    times.  ``scale_free`` and ``arc_relative`` are scale-normalized shape
-    diagnostics.  ``metric`` is retained only for longitudinal-scale auditing;
-    the formal shape-priority report uses ``shape_priority``.
+    times.  ``arc_relative`` / ``scale_free`` are the shape-consistent modes for
+    primary reporting while longitudinal metre scale is unvalidated.  ``metric``
+    and ``shape_priority`` remain diagnostic/audit modes only.
     """
     if scale_mode not in {"metric", "scale_free", "arc_relative", "shape_priority"}:
         raise ValueError("scale_mode must be metric, scale_free, arc_relative, or shape_priority")

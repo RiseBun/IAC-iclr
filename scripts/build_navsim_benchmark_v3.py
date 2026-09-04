@@ -120,18 +120,38 @@ def main() -> None:
     clean = []
     for i, row in enumerate(selected):
         out = {k: v for k, v in row.items() if not k.startswith("_")}
+        # Keep the source identity stable for private joins and expose the
+        # canonical field names consumed by the frozen evaluator.  The
+        # public release later strips all image paths and private states.
+        source_key = str(out.get("source_key") or "")
+        if not source_key:
+            raise ValueError("selected row is missing source_key")
         out.update(
             {
                 "benchmark_id": f"benchmark_v3-{i:05d}",
+                "sample_id": source_key,
                 "split": "benchmark_v3",
                 "stratum": row["_stratum_v3"],
                 "scene_group": row["_scene_group_v3"],
                 "selection_seed": args.seed,
                 "measurement_only": True,
                 "future_visibility_policy": "private_reference; replace with WAM-generated future at evaluation",
+                "protocol": "iac-level1-benchmark-v3",
+                "history_frame_paths": list(out.get("history_images") or []),
+                "future_frame_paths": list(out.get("future_images") or []),
+                "intrinsics": out.get("camera_intrinsic"),
+                "distortion": out.get("camera_distortion"),
             }
         )
         clean.append(out)
+
+    if len(clean) != args.total:
+        raise RuntimeError(
+            f"benchmark-v3 selection produced {len(clean)} rows, expected exactly {args.total}"
+        )
+    sample_ids = [str(row["sample_id"]) for row in clean]
+    if len(set(sample_ids)) != len(sample_ids):
+        raise RuntimeError("benchmark-v3 selection produced duplicate sample_id values")
 
     args.output_root.mkdir(parents=True, exist_ok=True)
     out_path = args.output_root / "benchmark_v3_navsim_private.jsonl"
@@ -142,6 +162,7 @@ def main() -> None:
         "source_rows": len(rows),
         "selected_rows": len(clean),
         "scene_groups": len({r["scene_group"] for r in clean}),
+        "duplicate_sample_ids": len(clean) - len({r["sample_id"] for r in clean}),
         "dataset_counts": dict(Counter(r.get("dataset", "unknown") for r in clean)),
         "stratum_counts": dict(Counter(r["stratum"] for r in clean)),
         "stop_fraction": (sum(r["stratum"] == "stop" for r in clean) / len(clean)) if clean else None,

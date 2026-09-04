@@ -1,4 +1,4 @@
-# IAC Benchmark · 发布版 v1
+# IAC Benchmark · benchmark-v3
 
 English version: [README.md](README.md)
 
@@ -8,7 +8,8 @@ English version: [README.md](README.md)
 IAC（Imagined-future and Action Consistency）是一个用于评测世界动作模型
 （WAM）的可复现基准，目标是检查模型想象的未来是否与其输出动作保持一致。
 
-本发布版包含 **Step 1 连续图像侧测量层**，以及 Step 2/3 的提交和记分协议：
+当前冻结主榜为 **benchmark-v3：1000 条全 NAVSIM**。Waymo 保留为外部泛化集，
+不进入主榜分母。本发布版包含 **Step 1 连续图像侧测量层**，以及 Step 2/3 的提交和记分协议：
 使用候选盲的几何探针，从图像序列中提取前向/横向运动、航向和曲率，再与 WAM
 的未来动作或轨迹进行比较。它是可靠的测量层，但单独不能宣称已经证明因果一致性。
 
@@ -171,6 +172,12 @@ CCFC 是正式主榜列，但不是所有 WAM 的硬性准入条件。`missing` 
 
 ## 固定评测协议
 
+当前主榜使用 `benchmark-v3`：1000 条 NAVSIM，直行巡航不超过 30%，停车不超过
+5%，转弯/加速/制动合计 65%，675 个 scene group，窗口间隔至少 12 帧。完整
+配额、审计结果和 Step 3 的 978/1000 cache 边界见
+[`docs/BENCHMARK_V3_PROTOCOL_AUDIT_20260904_ZH.md`](docs/BENCHMARK_V3_PROTOCOL_AUDIT_20260904_ZH.md)。
+Waymo 仅作为 external generalization，不参与 v3 排名。
+
 - 冻结 benchmark 参考轴包含 4 帧历史图像（`t <= 0`）和 8 帧未来图像；WAM
   提交可以保留原生未来轴，只要至少有 4 个点并覆盖到 4.0 秒（DriveWAM 的
   4 点、1 Hz 轴合规）。本公开包中的 manifest **不包含未来图像**，只包含协议
@@ -178,8 +185,8 @@ CCFC 是正式主榜列，但不是所有 WAM 的硬性准入条件。`missing` 
 - 未来帧时间为 `0.5, 1.0, ..., 4.0 s`，必须保留精确时间戳。
 - 必须提供相机内参、外参和畸变参数。
 - benchmark 与 dev 按 scene/log group 隔离，构建过程确定性且有审计文件。
-- 当前冻结版本包含：benchmark 500 条 NAVSIM + 80 条 Waymo；dev 250 条 NAVSIM
-  + 20 条 Waymo，共 580/270 条。
+- benchmark-v1 的 580 条（NAVSIM 500 + Waymo 80）仅作为历史 pilot，不再是当前
+  主榜分母；v3 主榜固定为 NAVSIM 1000 条。
 - 样本分层包含停车、制动、加速、横向转弯和直行巡航，避免被直行样本主导。
 
 公开 manifest 保留样本身份、split、stratum、时间戳、标定和历史状态，但移除
@@ -239,10 +246,10 @@ python scripts/score_iac_submission.py --frozen-pilots --output scorecard.json
 
 官方试点记分板为 `datasets/scorecard_v1.json`。CCFC/FAU/FCS 结果按实际干预、
 私有 GT join 和 rollout 证据填写；没有前置条件的格子保持 `unavailable`。
-当前 DriveWAM 的旧 CFAC/CCFC/FAU 数值含未验证的纵向米制尺度，仍作为
-`legacy_diagnostic_score` 留档。native4 形状口径 CFAC 已重算为
-**0.7610（564/580，interval coverage 0.6981）**；正式版本只接收横向、yaw、曲率及
-相对/弧长形状。CCFC 和 FAU 仍需各自的成对/私有 GT 形状报告，暂不填入新主分。
+DriveWAM 形状 CFAC pilot 为 **0.7610（564/580，interval coverage 0.6981）**，
+字段仅横向 / yaw / 曲率。旧 CFAC=0.4825 是同字段的 dir×mag×temp 公式，不是纵向米制分。
+CCFC 全量 metric=0.1235、arc_relative=0.2234（357/580），默认仍未切到形状主分。
+FAU=0.6509 的 components 已是形状量，待与新 CFAC 聚合口径对齐后冻结。
 
 ## Step 1 综合指标
 

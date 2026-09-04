@@ -30,8 +30,15 @@ WAM 生成未来图像、原生 action trajectory、4 秒时间轴、模型版�
 exp(-mean(normalized MAE of lateral_speed, yaw_rate, curvature))
 ```
 
-它不含米制速度、加速度或绝对前向距离，不能与旧报告中的 `CFAC=0.4825` 直接比较。
-旧值保留为 `legacy_diagnostic_score`。
+它不含米制速度、加速度或绝对前向距离。
+
+与旧 `CFAC=0.4825` 的差别**不是**“旧分混进了 speed”：旧 `iac-cfac-v1` 报告的
+components 同样只有 lateral / yaw / curvature，聚合为各分量
+`(direction_score × magnitude_score × temporal_alignment)^(1/3)` 的平均。  
+本轮改为 `exp(-mean normalized MAE)`，并使用更严的 shape observability gate
+（interval coverage 0.6981 vs 旧 coverage≈0.997）。因此 **0.7610 与 0.4825 不可比**。  
+同一次 alignment 里，把 speed/accel 也折进复合分的是 `experimental_composite`
+（约 0.60，`calibration_only_not_formal_score`），那才是含未验证纵向米制的诊断列。
 
 ## 质量与失败边界
 
