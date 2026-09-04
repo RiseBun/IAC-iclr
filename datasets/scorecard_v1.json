@@ -38,14 +38,14 @@
       "model_id": "drivewam_navsim",
       "capability": "native_action_conditioned",
       "cells": {
-        "cfac": {"status": "missing", "legacy_diagnostic_score": 0.4825, "dynamic_score": 0.4321, "n": 580, "coverage": 0.9966, "reason": "legacy CFAC includes unvalidated longitudinal metric scale; shape-only recomputation required"},
+        "cfac": {"status": "pilot", "score": 0.7610, "n": 564, "total": 580, "coverage": 0.9724, "interval_coverage": 0.6981, "score_definition": "primary_shape_composite", "motion_fields": ["lateral_speed_mps", "yaw_rate_radps", "curvature_1pm"], "legacy_diagnostic_score": 0.4825, "dynamic_score": 0.4321, "legacy_coverage": 0.9966, "reason": "formal pilot score now uses shape-only native-action alignment; legacy metric-longitudinal score retained for audit"},
         "ccfc": {"status": "missing", "legacy_diagnostic_score": 0.1235, "n": 357, "coverage": 0.6155, "intervention_type": "paired_command", "reason": "legacy metric magnitude includes unvalidated longitudinal scale; shape-only paired recomputation required"},
         "fau_f": {"status": "missing", "legacy_diagnostic_score": 0.61, "n": 562, "coverage": 0.9689, "reason": "legacy FAU_F includes unvalidated longitudinal metric scale; shape/relative recomputation required"},
         "fau_a": {"status": "missing", "legacy_diagnostic_score": 0.73, "n": 562, "coverage": 0.9689, "reason": "legacy FAU_A includes unvalidated longitudinal metric scale; shape/relative recomputation required"},
         "fau": {"status": "missing", "legacy_diagnostic_score": 0.6509, "n": 562, "coverage": 0.9689, "aggregation": "sqrt(fau_f*fau_a)", "reason": "legacy FAU combines unvalidated longitudinal metric scale; shape/relative recomputation required"},
         "fcs": {"status": "pilot", "score": 0.8086, "n": 491, "coverage": 0.982, "environment": "NAVSIM-PDM static_cached_objects_compat"},
         "coverage": {"status": "pilot", "per_metric": {
-          "cfac": {"n": 578, "total": 580, "rate": 0.9966},
+          "cfac": {"n": 564, "total": 580, "rate": 0.9724},
           "ccfc": {"n": 357, "total": 580, "rate": 0.6155},
           "fau": {"n": 562, "total": 580, "rate": 0.9689},
           "fcs": {"n": 491, "total": 500, "rate": 0.982}

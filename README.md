@@ -262,9 +262,11 @@ DriveWAM, Epona and DriveVA as capability-stratified pilots. CCFC/FAU/FCS cells
 are populated only when the required evidence exists; otherwise they are
 `unavailable`, never fabricated as zero.
 The previous DriveWAM CFAC/CCFC/FAU values used an unvalidated metric
-longitudinal scale and are now retained only as `legacy_diagnostic_score`; they
-are excluded from the formal score until shape/relative recomputation. The
-formal score uses lateral, yaw, curvature, and relative/arc-length shape.
+longitudinal scale and remain as `legacy_diagnostic_score` for audit. The
+native4 shape-only CFAC is now measured as **0.7610 (564/580, interval coverage
+0.6981)**. The formal score uses lateral, yaw, curvature, and relative/arc-length
+shape; CCFC and FAU remain unavailable until their corresponding paired/GT
+shape reports are recomputed.
 
 ## Step 1 metric summary
 

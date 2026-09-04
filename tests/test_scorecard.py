@@ -68,6 +68,7 @@ class ScorecardTest(unittest.TestCase):
         board = frozen_pilot_scorecard()
         self.assertEqual(board["protocol"], "iac-scorecard-v1")
         self.assertIn("ccfc", board["main_columns"])
+        self.assertEqual(board["models"][1]["cells"]["cfac"]["status"], "pilot")
         self.assertEqual(board["models"][1]["cells"]["ccfc"]["status"], "missing")
         self.assertEqual(board["models"][0]["cells"]["ccfc"]["status"], "unavailable")
 
@@ -78,7 +79,8 @@ class ScorecardTest(unittest.TestCase):
         self.assertEqual(policy["excluded_motion_fields"], ["speed_mps", "acceleration_mps2"])
         self.assertTrue(policy["excluded_fields_are_diagnostic_only"])
         drivewam = board["models"][1]["cells"]
-        self.assertNotIn("score", drivewam["cfac"])
+        self.assertEqual(drivewam["cfac"]["score"], 0.7610)
+        self.assertEqual(drivewam["cfac"]["coverage"], 0.9724)
         self.assertIn("legacy_diagnostic_score", drivewam["cfac"])
 
 

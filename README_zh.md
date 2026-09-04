@@ -239,8 +239,10 @@ python scripts/score_iac_submission.py --frozen-pilots --output scorecard.json
 
 官方试点记分板为 `datasets/scorecard_v1.json`。CCFC/FAU/FCS 结果按实际干预、
 私有 GT join 和 rollout 证据填写；没有前置条件的格子保持 `unavailable`。
-当前 DriveWAM 的旧 CFAC/CCFC/FAU 数值含未验证的纵向米制尺度，已在记分板中降级为
-`legacy_diagnostic_score`，不进入正式主分；正式版本只接收横向、yaw、曲率及相对/弧长形状。
+当前 DriveWAM 的旧 CFAC/CCFC/FAU 数值含未验证的纵向米制尺度，仍作为
+`legacy_diagnostic_score` 留档。native4 形状口径 CFAC 已重算为
+**0.7610（564/580，interval coverage 0.6981）**；正式版本只接收横向、yaw、曲率及
+相对/弧长形状。CCFC 和 FAU 仍需各自的成对/私有 GT 形状报告，暂不填入新主分。
 
 ## Step 1 综合指标
 
