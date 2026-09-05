@@ -15,6 +15,7 @@ The release entrypoints are the following:
 
 The remaining builders and adapters are compatibility utilities for constructing
 private NAVSIM/Waymo inputs or reproducing historical pilots. They never ship
-raw data and are not required to score a submission. A script that requires a
-private mount must fail with a missing-input error rather than silently using a
-logged action or oracle state.
+raw data and are not required to score a submission. Server-specific launch and
+download wrappers are intentionally excluded. A script that requires a private
+mount must fail with a missing-input error rather than silently using a logged
+action or oracle state.
