@@ -823,7 +823,16 @@ def aggregate(
     *,
     shape_fallback_enabled: bool = True,
 ) -> dict[str, Any]:
-    valid = [record for record in records if record.get("comparison", {}).get("status") == "ok"]
+    # Parked windows are useful for observability/stop detection, but do not
+    # contribute to motion alignment averages.  Keeping this exclusion here
+    # makes the denominator explicit instead of silently turning zero motion
+    # into an easy CFAC score.
+    valid = [
+        record for record in records
+        if record.get("comparison", {}).get("status") == "ok"
+        and str(record.get("stratum", "")) != "stop"
+    ]
+    stop_records = [record for record in records if str(record.get("stratum", "")) == "stop"]
     fields = MOTION_FIELDS
     metrics: dict[str, Any] = {}
     for field in fields:
@@ -1074,6 +1083,7 @@ def aggregate(
         },
         "causal_claim_eligible": False,
         "samples_total": len(records),
+        "stop_samples_excluded_from_motion_averages": len(stop_records),
         "samples_evaluable": len(valid),
         "samples_missing_decoder_score": sum(record.get("status") == "missing_decoder_score" for record in records),
         "mean_interval_coverage": None if not valid else float(np.mean([record["comparison"]["coverage"] for record in valid])),
@@ -1218,6 +1228,7 @@ def main() -> None:
             records.append({
                 "sample_id": sample_id,
                 "scene_id": row.get("scene_id"),
+                "stratum": (row.get("metadata") or {}).get("stratum", row.get("stratum")),
                 "future_times_s": list(row["future_times_s"]),
                 "reference_source": args.reference_source,
                 "level1_input_audit": _level1_input_audit(row, args.reference_source),
@@ -1355,6 +1366,7 @@ def main() -> None:
         records.append({
             "sample_id": sample_id,
             "scene_id": row.get("scene_id"),
+            "stratum": (row.get("metadata") or {}).get("stratum", row.get("stratum")),
             "future_times_s": times,
             "reference_source": args.reference_source,
             "level1_input_audit": _level1_input_audit(row, args.reference_source),
