@@ -7,8 +7,11 @@
 
 | 路径 | 作用 | 是否必需 |
 |---|---|---:|
-| `src/iac_new/` | 光流、标定地面几何、连续解码、可观测性和评分实现 | 是 |
+| `src/iac_new/` | 光流、标定地面几何、连续解码、可观测性、CFAC/FAU 评分 | 是 |
+| `src/iac_new/foresight_metrics.py` | CFAC/FAU 主度量实现 | 是 |
 | `scripts/validate_wam_submission.py` | 提交格式与泄漏审计 | 是 |
+| `scripts/audit_wam_level1_outputs.py` | 接受 4/8 未来帧的输出审计 | 是 |
+| `scripts/build_wam_level1_continuous_manifest.py` | 公开身份与私有帧 join | 是 |
 | `scripts/evaluate_continuous_decoder.py` | Step 1 图像侧解码入口 | 是 |
 | `scripts/evaluate_continuous_motion_alignment.py` | 图像运动与 native action 对齐 | 是 |
 | `scripts/score_iac_submission.py` | 能力分层记分板 | 是 |
@@ -16,6 +19,7 @@
 | `datasets/benchmark_v3_public.jsonl` | 1000 条脱敏 NAVSIM 主榜身份与协议元数据 | 是 |
 | `datasets/benchmark_v3.audit.json` | 选集、分层和泄漏审计摘要 | 是 |
 | `weights/` | RAFT-Large 权重、来源和 SHA-256 | 是 |
+| `LICENSE` / `CITATION.cff` | 开源许可与引用元数据 | 是 |
 | `tests/` | 确定性协议与几何测试 | 推荐 |
 | `docs/` | v3 协议、结果、审计与复现边界 | 是 |
 

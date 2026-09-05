@@ -174,8 +174,11 @@ Step 1 的服务器命令使用私有 join manifest 和 `configs/plane.json`；�
 本身无法访问图像或 GT。能力状态为 `pass`、`pilot`、`unavailable`、`missing` 或
 `ineligible`，不把缺失能力填为 0。
 
-## 许可证与数据
+## 许可证、引用与数据
 
-代码遵循仓库许可证。RAFT 权重遵循 torchvision 上游许可证（见
-[`weights/README.md`](weights/README.md)）。NAVSIM 和 Waymo 不在此重新分发，使用者
-需按原始条款自行获取。
+- 代码：[MIT License](LICENSE)
+- 引用：[`CITATION.cff`](CITATION.cff)
+- RAFT 权重：上游 torchvision 条款（[`weights/README.md`](weights/README.md)）
+- NAVSIM / Waymo 原始数据**不**随包分发，需按各自条款自行获取
+
+安装包名为 `iac-benchmark`，导入路径仍为 `iac_new`，以保持冻结评测脚本兼容。

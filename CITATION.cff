@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+title: "IAC Benchmark: Imagined-future and Action Consistency"
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - name: "IAC Benchmark Authors"
+repository-code: "https://github.com/RiseBun/IAC-iclr"
+url: "https://github.com/RiseBun/IAC-iclr/tree/benchmark-release-v1"
+license: MIT
+version: "1.0.0"
+date-released: "2026-09-05"
+abstract: >-
+  IAC is a capability-stratified evaluation protocol for world action models.
+  It measures whether a model's native action is consistent with the future
+  visual state it imagines, using a frozen candidate-blind optical-flow probe
+  and separate CFAC, CCFC, FAU and FCS evidence columns.
+keywords:
+  - world action model
+  - foresight consistency
+  - autonomous driving
+  - benchmark
+  - optical flow

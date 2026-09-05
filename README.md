@@ -192,9 +192,12 @@ The server-only Step 1 command consumes a private joined manifest and runs
 manifest alone cannot access images or GT. Capability status is one of
 `pass`, `pilot`, `unavailable`, `missing` or `ineligible`.
 
-## License and data
+## License, citation and data
 
-Code is released under the repository license. The RAFT checkpoint remains
-subject to its upstream torchvision license (see [`weights/README.md`](weights/README.md)).
-NAVSIM and Waymo data are not redistributed; users must obtain them under their
-own terms.
+- Code: [MIT License](LICENSE)
+- Cite: see [`CITATION.cff`](CITATION.cff)
+- RAFT checkpoint: upstream torchvision terms ([`weights/README.md`](weights/README.md))
+- NAVSIM / Waymo raw data are **not** redistributed; obtain them under their own licenses
+
+Python package name on PyPI-style installs is `iac-benchmark`; the import path
+remains `iac_new` for compatibility with the frozen evaluation scripts.

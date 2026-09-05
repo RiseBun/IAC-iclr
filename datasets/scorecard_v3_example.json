@@ -1,15 +1,26 @@
 {
   "protocol": "iac-scorecard-v1",
   "benchmark": "benchmark_v3",
-  "status": "reference_pilot",
-  "model_id": "drivewam_navsim_checkpoint_20260824",
-  "metrics": {
-    "cfac": {"score": 0.7638, "n": 823, "total": 1000, "coverage": 0.823, "aggregation": "primary_shape_composite"},
-    "ccfc": {"score": 0.2178, "n_pairs": 453, "total_pairs": 1000, "coverage": 0.453, "intervention_type": "paired_command", "aggregation": "arc_relative"},
-    "fau_f": {"score": 0.5449, "n": 823, "total": 1000, "coverage": 0.823},
-    "fau_a": {"score": 0.4904, "n": 823, "total": 1000, "coverage": 0.823},
-    "fau": {"score": 0.5169, "n": 823, "total": 1000, "coverage": 0.823, "aggregation": "sqrt(fau_f*fau_a)"},
-    "fcs": {"score": 0.5143, "successes": 503, "executable": 978, "total": 1000, "coverage": 0.978, "environment": "NAVSIM-PDM-kinematic-bicycle-static_cached_objects_compat"}
+  "claim": "capability-stratified WAM measurement; primary scores use shape/relative motion only",
+  "primary_score_policy": {
+    "included_motion_fields": ["lateral_speed_mps", "yaw_rate_radps", "curvature_1pm"],
+    "excluded_motion_fields": ["speed_mps", "acceleration_mps2"],
+    "excluded_fields_are_diagnostic_only": true
   },
-  "note": "Reference pilot only; missing capabilities are unavailable, not zero-filled. See docs/DRIVEWAM_BENCHMARK_V3_RESULTS_20260905_ZH.md."
+  "models": [
+    {
+      "model_id": "drivewam_navsim_checkpoint_20260824",
+      "capability": "native_action_conditioned",
+      "status": "reference_pilot",
+      "cells": {
+        "cfac": {"status": "pilot", "score": 0.7638, "n": 823, "total": 1000, "coverage": 0.823, "score_definition": "primary_shape_composite"},
+        "ccfc": {"status": "pilot", "score": 0.2178, "n": 453, "total": 1000, "coverage": 0.453, "intervention_type": "paired_command", "score_definition": "arc_relative", "metric_diagnostic_score": 0.1190},
+        "fau_f": {"status": "pilot", "score": 0.5449, "n": 823, "total": 1000, "coverage": 0.823},
+        "fau_a": {"status": "pilot", "score": 0.4904, "n": 823, "total": 1000, "coverage": 0.823},
+        "fau": {"status": "pilot", "score": 0.5169, "n": 823, "total": 1000, "coverage": 0.823, "aggregation": "sqrt(fau_f*fau_a)"},
+        "fcs": {"status": "pilot", "score": 0.5143, "n": 978, "successes": 503, "coverage": 0.978, "environment": "NAVSIM-PDM-kinematic-bicycle-static_cached_objects_compat"}
+      }
+    }
+  ],
+  "note": "Reference pilot schema for additional models: fill measured cells, leave unsupported cells as unavailable (never 0). Details in docs/DRIVEWAM_BENCHMARK_V3_RESULTS_20260905_ZH.md."
 }

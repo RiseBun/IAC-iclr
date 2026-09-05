@@ -3,9 +3,11 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "iac-new"
+name = "iac-benchmark"
 version = "1.0.0"
-description = "Lightweight image-side trajectory probe for WAM evaluation"
+description = "IAC: imagined-future and action consistency benchmark for world action models"
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.24",
