@@ -1,0 +1,29 @@
+{
+  "protocol": "iac-benchmark-v3-navsim-only-v1",
+  "source_inventory": "private://navsim_level1_inventory_4h8f.jsonl",
+  "source_rows": 3860,
+  "selected_rows": 1000,
+  "scene_groups": 675,
+  "duplicate_sample_ids": 0,
+  "dataset_counts": {
+    "navsim": 1000
+  },
+  "stratum_counts": {
+    "acceleration": 82,
+    "braking": 65,
+    "lateral_turn": 503,
+    "stop": 50,
+    "straight_cruise": 300
+  },
+  "stop_fraction": 0.05,
+  "target_total": 1000,
+  "stop_max_fraction": 0.05,
+  "window_nonoverlap_within_scene": true,
+  "dynamic_special_fraction": 0.65,
+  "future_horizon_s": 4.0,
+  "history_frames": 4,
+  "future_frames": 8,
+  "public_release_policy": "strip future image paths and private GT; retain protocol metadata only",
+  "intrinsics_coordinate_size": [1920, 1080],
+  "public_manifest": "datasets/benchmark_v3_public.jsonl"
+}

@@ -170,6 +170,7 @@ class RaftFlowExtractor:
         intrinsics: np.ndarray,
         distortion: np.ndarray,
         target_size: tuple[int, int],
+        inference_size: tuple[int, int] | None = None,
         allow_mixed_source_sizes: bool = False,
         return_uncertainty: bool = False,
         uncertainty_tail: int = 8,
@@ -177,11 +178,15 @@ class RaftFlowExtractor:
     ) -> FlowObservation:
         if len(frame_paths) < 2:
             raise ValueError("at least two video frames are required")
-        images, scaled_intrinsics, source_size = self._read_images(
+        # The decoder coordinate system remains target_size.  An optional
+        # larger inference canvas is isolated to RAFT, then every flow and
+        # forward/backward mask is mapped back before geometry/scoring.
+        inference_size = target_size if inference_size is None else tuple(inference_size)
+        images, inference_intrinsics, source_size = self._read_images(
             frame_paths,
             np.asarray(intrinsics, dtype=np.float64),
             np.asarray(distortion, dtype=np.float64),
-            target_size,
+            inference_size,
             allow_mixed_source_sizes=allow_mixed_source_sizes,
         )
         forward, forward_uncertainty = self._infer_pairs(
@@ -204,20 +209,32 @@ class RaftFlowExtractor:
             residuals.append(np.full(forward[-1].shape[:2], np.nan, dtype=np.float32))
             long_range_residual = np.stack(residuals, axis=0)
         masks = None
+        backward = None
         if self.use_forward_backward:
             backward, _ = self._infer_pairs(images[1:], images[:-1])
+        if inference_size != target_size:
+            def resize_flow(value: np.ndarray) -> np.ndarray:
+                height, width = target_size[1], target_size[0]
+                resized = cv2.resize(value, (width, height), interpolation=cv2.INTER_LINEAR).astype(np.float32)
+                resized[..., 0] *= width / float(inference_size[0])
+                resized[..., 1] *= height / float(inference_size[1])
+                return resized
+            forward = np.stack([resize_flow(value) for value in forward], axis=0)
+            if backward is not None:
+                backward = np.stack([resize_flow(value) for value in backward], axis=0)
+        if backward is not None:
             masks = np.stack(
-                [
-                    forward_backward_mask(
-                        fwd,
-                        bwd,
-                        absolute_threshold_px=self.fb_abs_threshold_px,
-                        relative_threshold=self.fb_relative_threshold,
-                    )
-                    for fwd, bwd in zip(forward, backward)
-                ],
-                axis=0,
-            )
+                [forward_backward_mask(fwd, bwd, absolute_threshold_px=self.fb_abs_threshold_px,
+                                        relative_threshold=self.fb_relative_threshold)
+                 for fwd, bwd in zip(forward, backward)], axis=0)
+        scaled_intrinsics = scale_intrinsics(
+            np.asarray(intrinsics, dtype=np.float64), source_size, target_size
+        )
+        if inference_size != target_size and long_range_residual is not None:
+            long_range_residual = np.stack([
+                cv2.resize(value, target_size, interpolation=cv2.INTER_LINEAR).astype(np.float32)
+                for value in long_range_residual
+            ], axis=0)
         return FlowObservation(
             forward=forward,
             consistency_masks=masks,

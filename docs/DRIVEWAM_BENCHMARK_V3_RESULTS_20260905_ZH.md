@@ -4,7 +4,7 @@
 
 - 数据集：NAVSIM v3，1000 个非重叠样本；直行上限 30%，包含转弯、加速、制动和停车分层。
 - 模型：`drivewam_navsim_checkpoint_20260824`，沿用服务器已有 checkpoint 与 LingBot-VA base，不重复下载。
-- 输出位置：`/mnt/slurmfs-4090node3/user_data/zchen897/benchmark_v3_runs/`。
+- 输出位置：`<private_run_root>/benchmark_v3_runs/`（服务器私有目录）。
 - 图像探针：冻结 RAFT-Large、前后向一致性、地面平面自车几何、candidate-blind continuous decoder；纵向米制速度仅作诊断。
 
 ## Step 1 / CFAC 与 FAU
@@ -58,12 +58,12 @@ native action 进入独立 NAVSIM PDM kinematic-bicycle closed-loop rollout。�
 服务器上的完整命令和输入、输出路径保存在各脚本的 argparse 帮助与 shell 日志中。核心命令如下：
 
 ```bash
-PYTHONPATH=/mnt/slurmfs-4090node1/homes/zchen897/iac_new/src \
-python /mnt/slurmfs-4090node1/homes/zchen897/iac_new/scripts/evaluate_v3_drivewam_cfac_fau.py \
-  --level1-input /mnt/slurmfs-4090node3/user_data/zchen897/benchmark_v3_drivewam_level1_input.jsonl \
-  --level1-scores /mnt/slurmfs-4090node3/user_data/zchen897/benchmark_v3_runs/level1_v3_drivewam.jsonl \
-  --private-manifest /mnt/slurmfs-4090node3/user_data/zchen897/iac_navsim_benchmark_v3/benchmark_v3_navsim_private.jsonl \
-  --output /mnt/slurmfs-4090node3/user_data/zchen897/benchmark_v3_runs/drivewam_cfac_fau_v3.json
+PYTHONPATH=<repo_root>/src \
+python <repo_root>/scripts/evaluate_v3_drivewam_cfac_fau.py \
+  --level1-input <private_run_root>/benchmark_v3_drivewam_level1_input.jsonl \
+  --level1-scores <private_run_root>/benchmark_v3_runs/level1_v3_drivewam.jsonl \
+  --private-manifest <private_run_root>/iac_navsim_benchmark_v3/benchmark_v3_navsim_private.jsonl \
+  --output <private_run_root>/benchmark_v3_runs/drivewam_cfac_fau_v3.json
 ```
 
 所有评分状态采用 fail-closed：缺少图像、native action、私有 GT 或时间轴时报告 `unavailable`，不填零分。

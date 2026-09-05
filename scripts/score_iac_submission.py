@@ -24,7 +24,7 @@ def main() -> None:
     parser.add_argument("--public", type=Path)
     parser.add_argument("--submission", type=Path)
     parser.add_argument("--measurements", type=Path, help="JSON object of cell measurements")
-    parser.add_argument("--frozen-pilots", action="store_true", help="emit the official v1 pilot scoreboard")
+    parser.add_argument("--frozen-pilots", action="store_true", help="emit the legacy pilot scoreboard (compatibility only)")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.frozen_pilots:
@@ -46,7 +46,7 @@ def main() -> None:
             measurements = json.loads(args.measurements.read_text(encoding="utf-8"))
         report = {
             "protocol": "iac-scorecard-v1",
-            "benchmark": "benchmark_v1",
+            "benchmark": "benchmark_v3",
             "submission_rows": len(rows),
             "models": [
                 build_model_scorecard(

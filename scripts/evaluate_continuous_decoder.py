@@ -47,6 +47,11 @@ def evaluate_record(record: dict[str, Any], extractor: RaftFlowExtractor, config
         record["intrinsics"],
         record["distortion"],
         (width, height),
+        inference_size=(
+            tuple(config.get("flow", {}).get("inference_size"))
+            if config.get("flow", {}).get("inference_size") is not None
+            else None
+        ),
         allow_mixed_source_sizes=bool(config.get("allow_mixed_source_sizes", False)),
         return_uncertainty=bool(config.get("flow", {}).get("refinement_uncertainty", False)),
         uncertainty_tail=int(config.get("flow", {}).get("uncertainty_tail", 8)),

@@ -46,7 +46,7 @@ Waymo 只回答“同一图像侧探针能否跨数据域工作”，不参与 v
 服务器上的 v3 私有选集与审计：
 
 ```text
-/mnt/slurmfs-4090node3/user_data/zchen897/iac_navsim_benchmark_v3/
+`<private_run_root>/iac_navsim_benchmark_v3/`
   benchmark_v3_navsim_private.jsonl
   benchmark_v3_navsim_audit.json
 ```
@@ -54,7 +54,7 @@ Waymo 只回答“同一图像侧探针能否跨数据域工作”，不参与 v
 DriveWAM 输入样本在有空间的存储节点构建，避免 4090 节点主盘（已满）继续写入：
 
 ```text
-/mnt/slurmfs-4090node3/user_data/zchen897/benchmark_v3_drivewam_inputs/
+`<private_run_root>/benchmark_v3_drivewam_inputs/`
 ```
 
 生成图像和 native action 完成后，严格按以下顺序运行：

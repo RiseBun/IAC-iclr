@@ -1,5 +1,7 @@
 {
-  "image": {"width": 512, "height": 288},
+  "protocol": "iac-benchmark-v3-navsim-only-v1",
+  "benchmark": "benchmark_v3",
+  "image": {"width": 448, "height": 256},
   "geometry": {"backend": "plane"},
   "flow": {
     "backend": "torchvision_raft",
@@ -7,6 +9,7 @@
     "checkpoint": "weights/raft_large_C_T_SKHT_V2-ff5fadd5.pth",
     "updates": 32,
     "batch_size": 4,
+    "inference_size": [512, 288],
     "forward_backward": true,
     "fb_abs_threshold_px": 1.5,
     "fb_relative_threshold": 0.05

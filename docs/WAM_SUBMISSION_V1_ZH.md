@@ -1,7 +1,7 @@
 # WAM 提交与分层记分板 v1
 
 本文件补全公开包里缺的「作者怎么交、我们怎么打分」。  
-Step 1 探针和 `benchmark_v1` split 不变。新的统一准入是“future visual state +
+当前主榜使用 `benchmark_v3` split；`benchmark_v1` 仅保留为历史兼容集。新的统一准入是“future visual state +
 native action”；生成形式不设限，详见
 [`WAM_SCOPE_AND_UNIFIED_PROTOCOL_V1_ZH.md`](WAM_SCOPE_AND_UNIFIED_PROTOCOL_V1_ZH.md)。
 CCFC/FCS 是能力分层主榜列：模型支持就提交并计分，不支持就标记
@@ -13,8 +13,9 @@ CCFC/FCS 是能力分层主榜列：模型支持就提交并计分，不支持�
 
 - 可复现的 native action；
 - future visual state：至少 4 个未来点、覆盖约 4 秒的 RGB，或通过固定 decoder
-  重建出的对应 RGB；模型必须保留原生时间戳（冻结参考轴为 8 点，DriveWAM 的
-  原生 4 点/1 Hz 也接受）；
+  重建出的对应 RGB；模型必须保留原生时间戳。公开 Level-1 join/audit 接受
+  **4 或 8 个未来帧**（history 另计，通常 4 帧；因此总图常为 8 或 12）；
+  DriveWAM 原生 4 点/1 Hz 与标准 8 点/0.5 Hz 均合规；
 - `history`、`condition/intervention`、精确时间戳、随机种子、model revision 和
   lineage。
 
@@ -69,12 +70,12 @@ action，再把结果声称为 CCFC。
 
 ```bash
 python scripts/validate_wam_submission.py \
-  --public datasets/benchmark_v1_public.jsonl \
+  --public datasets/benchmark_v3_public.jsonl \
   --submission <submission.jsonl> \
   --output <audit.json>
 
 python scripts/build_wam_level1_continuous_manifest.py \
-  --base <private_benchmark_v1.jsonl> \
+  --base <private_benchmark_v3.jsonl> \
   --generated <submission.jsonl> \
   --output <joined.jsonl>
 
@@ -91,7 +92,7 @@ python scripts/evaluate_continuous_motion_alignment.py \
   --output <l1_report.json>
 
 python scripts/score_iac_submission.py \
-  --public datasets/benchmark_v1_public.jsonl \
+  --public datasets/benchmark_v3_public.jsonl \
   --submission <submission.jsonl> \
   --measurements <cells.json> \
   --output <scorecard.json>
@@ -142,6 +143,6 @@ coverage 分层报告，不对缺失列做零填充或未经校准的总平均�
 不具备某项可选能力 = `unavailable`；声称具备但材料不完整 = `missing`；违反硬准入
 = `ineligible`；小 n 已有结果 = `pilot`。禁止把这些状态写成 0 分。
 
-当前官方试点记分板：`datasets/scorecard_v1.json`（`python scripts/score_iac_submission.py --frozen-pilots`）。
-试点中的 CCFC/FCS/FAU 是否可用按实际证据填写；没有证据的列标记
-`unavailable`，而不是伪造分数。
+v3 参考记分板示例：`datasets/scorecard_v3_example.json`。历史试点命令
+`--frozen-pilots` 仅为兼容用途，不用于 v3 主榜。CCFC/FCS/FAU 是否可用按实际证据
+填写；没有证据的列标记 `unavailable`，而不是伪造分数。

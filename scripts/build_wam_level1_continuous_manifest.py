@@ -28,14 +28,24 @@ def _generated_images(row: dict[str, Any]) -> list[str]:
     return [str(item) for item in value]
 
 
+ALLOWED_FUTURE_COUNTS = frozenset({4, 8})
+
+
 def build_manifest(
     base_rows: list[dict[str, Any]],
     generated_rows: list[dict[str, Any]],
     *,
     expected_history_count: int = 4,
-    expected_future_count: int = 8,
+    allowed_future_counts: frozenset[int] | set[int] = ALLOWED_FUTURE_COUNTS,
+    expected_future_count: int | None = None,
     check_files: bool = False,
 ) -> list[dict[str, Any]]:
+    if expected_future_count is not None:
+        if expected_future_count not in allowed_future_counts:
+            raise ValueError(f"expected_future_count must be one of {sorted(allowed_future_counts)}")
+        allowed = frozenset({expected_future_count})
+    else:
+        allowed = frozenset(allowed_future_counts)
     base_by_key: dict[str, dict[str, Any]] = {}
     for row in base_rows:
         key = _source_key(row)
@@ -64,23 +74,28 @@ def build_manifest(
         if len(history) != expected_history_count:
             raise ValueError(f"{branch_id}: base history must contain {expected_history_count} frames")
         future = _generated_images(generated)
-        if len(future) != expected_future_count:
-            raise ValueError(f"{branch_id}: generated future must contain {expected_future_count} frames")
+        future_count = len(future)
+        if future_count not in allowed:
+            raise ValueError(
+                f"{branch_id}: generated future must contain one of {sorted(allowed)} frames, got {future_count}"
+            )
         if check_files:
             missing = [path for path in history + future if not Path(path).is_file()]
             if missing:
                 raise FileNotFoundError(f"{branch_id}: missing image {missing[0]}")
         times = np.asarray(generated.get("future_times_s", base.get("future_times_s")), dtype=np.float64)
-        if times.shape != (expected_future_count,) or not np.all(np.isfinite(times)) or np.any(np.diff(times) <= 0.0):
-            raise ValueError(f"{branch_id}: future_times_s must be finite, increasing, and length 8")
+        if times.shape != (future_count,) or not np.all(np.isfinite(times)) or np.any(np.diff(times) <= 0.0):
+            raise ValueError(
+                f"{branch_id}: future_times_s must be finite, increasing, and length {future_count}"
+            )
         if times[0] <= 0.0 or not (3.95 <= float(times[-1]) <= 4.05):
-            raise ValueError(f"{branch_id}: generated future must cover approximately 0.5..4.0 seconds")
+            raise ValueError(f"{branch_id}: generated future must cover approximately 4.0 seconds")
         action = generated.get("action_condition", {}).get("trajectory")
         if action is None:
             action = generated.get("action_trajectory")
         action_array = np.asarray(action, dtype=np.float64)
-        if action_array.shape != (expected_future_count, 3) or not np.all(np.isfinite(action_array)):
-            raise ValueError(f"{branch_id}: action head trajectory must have shape [8,3]")
+        if action_array.shape != (future_count, 3) or not np.all(np.isfinite(action_array)):
+            raise ValueError(f"{branch_id}: action head trajectory must have shape [{future_count},3]")
         if generated.get("realized_future_ego_state") is not None or (generated.get("metadata") or {}).get("realized_future_ego_state") is not None:
             raise ValueError(f"{branch_id}: generated WAM output contains realized future state leakage")
         action_source = str(generated.get("action_source") or (generated.get("metadata") or {}).get("action_source") or "")
@@ -100,7 +115,7 @@ def build_manifest(
         # the image probe and belongs only to Level-2/3 closed-loop scoring.
         metadata.pop("realized_future_ego_state", None)
         metadata.update({
-            "protocol": "wam-generated-level1-history4-future8-v1",
+            "protocol": f"wam-generated-level1-history4-future{future_count}-v1",
             "source_key": key,
             "branch_id": branch_id,
             "wam_model_id": model_id,
@@ -143,13 +158,28 @@ def main() -> None:
     parser.add_argument("--generated", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--check-files", action="store_true")
+    parser.add_argument(
+        "--expected-future-count",
+        type=int,
+        choices=sorted(ALLOWED_FUTURE_COUNTS),
+        default=None,
+        help="pin exactly 4 or 8 future frames; default accepts either",
+    )
     args = parser.parse_args()
-    rows = build_manifest(_read(args.base), _read(args.generated), check_files=args.check_files)
+    rows = build_manifest(
+        _read(args.base),
+        _read(args.generated),
+        expected_future_count=args.expected_future_count,
+        check_files=args.check_files,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text("".join(json.dumps(row, ensure_ascii=True, separators=(",", ":")) + "\n" for row in rows), encoding="utf-8")
+    future_counts = sorted({len(row["future_frame_paths"]) for row in rows})
     print(json.dumps({
-        "protocol": "wam-generated-level1-history4-future8-v1",
+        "protocol": "wam-generated-level1-history4-future4or8-v1",
         "rows": len(rows),
+        "allowed_future_counts": sorted(ALLOWED_FUTURE_COUNTS),
+        "observed_future_counts": future_counts,
         "wam_models": sorted({row["wam_model_id"] for row in rows}),
         "output": str(args.output.resolve()),
         "future_images_source": "wam_generated",

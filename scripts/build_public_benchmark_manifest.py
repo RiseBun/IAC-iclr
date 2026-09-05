@@ -15,6 +15,7 @@ def public_row(row: dict) -> dict:
     source_key = row.get("source_key", row.get("sample_id", ""))
     return {
         "protocol": "iac-level1-benchmark-public-v1",
+        "benchmark": "benchmark_v3" if str(row.get("split", "")).endswith("v3") else "benchmark_v1",
         "benchmark_id": row.get("benchmark_id"),
         "sample_id": row.get("sample_id", source_key),
         "source_key": source_key,
@@ -27,6 +28,10 @@ def public_row(row: dict) -> dict:
         "future_times_s": row.get("future_times_s"),
         "history_ego_state": row.get("history_ego_state"),
         "intrinsics": intrinsics,
+        # Public calibration is expressed in the source-camera coordinate
+        # system. Submission manifests must provide K scaled to their output
+        # image size; keeping this explicit prevents the v3 resize/K bug.
+        "intrinsics_coordinate_size": row.get("intrinsics_coordinate_size", [1920, 1080]),
         "distortion": row.get("distortion", row.get("camera_distortion")),
         "camera_to_ego": row.get("camera_to_ego"),
         "history_frame_ids": [Path(str(path)).name for path in history],

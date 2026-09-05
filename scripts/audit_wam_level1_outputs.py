@@ -3,7 +3,8 @@
 
 The audit is deliberately fail-closed: a directory of images is not enough.
 Each row must retain lineage to a base sample, expose an independent action
-head, and contain exactly the 8-frame/4-second output used by the metric.
+head, and provide a native future axis with either 4 or 8 frames covering
+approximately 4.0 seconds (history is separate and usually 4 frames).
 """
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+ALLOWED_FUTURE_COUNTS = frozenset({4, 8})
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -34,15 +37,22 @@ def _images(row: dict[str, Any]) -> list[str]:
 def audit_rows(
     rows: list[dict[str, Any]],
     *,
-    expected_future_count: int = 8,
+    allowed_future_counts: frozenset[int] | set[int] = ALLOWED_FUTURE_COUNTS,
+    expected_future_count: int | None = None,
     check_files: bool = False,
 ) -> dict[str, Any]:
+    if expected_future_count is not None:
+        if expected_future_count not in allowed_future_counts:
+            raise ValueError(f"expected_future_count must be one of {sorted(allowed_future_counts)}")
+        allowed = frozenset({expected_future_count})
+    else:
+        allowed = frozenset(allowed_future_counts)
     issues: list[dict[str, Any]] = []
     seen: set[str] = set()
     complete = 0
+    future_count_histogram: dict[str, int] = {str(count): 0 for count in sorted(allowed)}
     for index, row in enumerate(rows):
         branch_id = str(row.get("branch_id") or "")
-        prefix = f"row[{index}]"
         row_issues: list[str] = []
         if not branch_id:
             row_issues.append("missing_branch_id")
@@ -58,20 +68,25 @@ def audit_rows(
         if not str(row.get("wam_model_id") or ""):
             row_issues.append("missing_wam_model_id")
         images = _images(row)
-        if len(images) != expected_future_count or any(not str(path) for path in images):
-            row_issues.append(f"future_images_must_have_{expected_future_count}_paths")
+        future_count = len(images)
+        if future_count not in allowed or any(not str(path) for path in images):
+            row_issues.append(f"future_images_must_have_one_of_{sorted(allowed)}_paths")
+        else:
+            future_count_histogram[str(future_count)] += 1
         if check_files:
             row_issues.extend("missing_image:" + str(path) for path in images if not Path(path).is_file())
         times = np.asarray(row.get("future_times_s"), dtype=np.float64)
-        if times.shape != (expected_future_count,) or not np.all(np.isfinite(times)) or np.any(np.diff(times) <= 0.0):
+        if times.shape != (future_count,) or not np.all(np.isfinite(times)) or (
+            future_count >= 2 and np.any(np.diff(times) <= 0.0)
+        ):
             row_issues.append("future_times_s_invalid")
-        elif times[0] <= 0.0 or not (3.95 <= float(times[-1]) <= 4.05):
-            row_issues.append("future_times_s_does_not_cover_0p5_to_4p0_seconds")
+        elif future_count in allowed and (times[0] <= 0.0 or not (3.95 <= float(times[-1]) <= 4.05)):
+            row_issues.append("future_times_s_must_cover_about_4_seconds")
         action = row.get("action_condition", {}).get("trajectory")
         if action is None:
             action = row.get("action_trajectory")
         action_array = np.asarray(action, dtype=np.float64)
-        if action_array.shape != (expected_future_count, 3) or not np.all(np.isfinite(action_array)):
+        if action_array.shape != (future_count, 3) or not np.all(np.isfinite(action_array)):
             row_issues.append("independent_action_head_trajectory_invalid")
         action_source = str(row.get("action_source") or (row.get("metadata") or {}).get("action_source") or "")
         if not action_source:
@@ -90,6 +105,8 @@ def audit_rows(
         "complete_rows": complete,
         "invalid_rows": len(issues),
         "formal_level1_input_ready": bool(rows) and not issues,
+        "allowed_future_counts": sorted(allowed),
+        "future_count_histogram": future_count_histogram,
         "issues": issues,
         "checked_files": bool(check_files),
     }
@@ -100,8 +117,19 @@ def main() -> None:
     parser.add_argument("--generated", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--check-files", action="store_true")
+    parser.add_argument(
+        "--expected-future-count",
+        type=int,
+        choices=sorted(ALLOWED_FUTURE_COUNTS),
+        default=None,
+        help="pin exactly 4 or 8 future frames; default accepts either",
+    )
     args = parser.parse_args()
-    report = audit_rows(read_jsonl(args.generated), check_files=args.check_files)
+    report = audit_rows(
+        read_jsonl(args.generated),
+        expected_future_count=args.expected_future_count,
+        check_files=args.check_files,
+    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=True, indent=2))

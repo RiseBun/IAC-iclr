@@ -1,330 +1,200 @@
-# IAC Benchmark · benchmark-v3
+# IAC Benchmark: Imagined-future and Action Consistency
 
-中文文档：[README_zh.md](README_zh.md)
+**Release:** `benchmark-v3` · **1,000 non-overlapping NAVSIM windows**
 
-This GitHub branch is the reproducible benchmark package: clone it and run
-`pip install -e .` from the repository root. Research notes and the old
-78-sample workspace live on `main`; they are not part of this release.
+**Repository:** [RiseBun/IAC-iclr](https://github.com/RiseBun/IAC-iclr/tree/benchmark-release-v1)
 
-IAC (Imagined-future and Action Consistency) is a reproducible benchmark for
-testing whether a WAM's imagined future is aligned with the action it emits.
-The current main benchmark is **benchmark-v3: 1,000 NAVSIM records**. Waymo is
-retained as an external-generalization set and is excluded from the main
-denominator. The package contains the **Step 1 continuous image-side measurement** and the
-submission/scorecard contracts for Step 2 and Step 3: a
-candidate-blind geometry probe extracts forward/lateral motion, heading and
-curvature from an image sequence, then compares those signals with the WAM's
-future action/trajectory. It is a measurement layer, not a claim of causality
-by itself.
+**中文文档:** [README_zh.md](README_zh.md)
 
-## Submission scope
+IAC is an evaluation protocol for world action models (WAMs). It asks a
+specific question: when a model emits a native action, is that action aligned
+with the future visual state the model predicts? IAC separates measurement,
+intervention consistency, and execution instead of collapsing them into a
+single video-quality or task-success number.
 
-The unified protocol evaluates WAMs that provide both **native action output**
-and a **future visual state**. The latter may be future RGB frames or a future
-latent that can be reconstructed to RGB with a fixed, checksummed decoder. Joint
-video-action generation, a shared head, semantic clear/risk interventions and
-video generation at deployment are not hard requirements. The required fields,
-lineage rules and intervention taxonomy are defined in
-[`docs/WAM_SCOPE_AND_UNIFIED_PROTOCOL_V1_ZH.md`](docs/WAM_SCOPE_AND_UNIFIED_PROTOCOL_V1_ZH.md).
+This repository is the reproducible release package. It contains no raw
+NAVSIM/Waymo frames, private ground truth, WAM checkpoints, or generated video.
+Those inputs are attached by the evaluation server through the manifest
+interface. Waymo is an external-domain protocol, not part of the v3 leaderboard.
 
-## Method architecture: Step 1 → Step 3
+## Contributions
+
+1. **Candidate-blind continuous ruler.** A frozen RAFT-Large plus calibrated
+   ground-plane geometry recovers lateral motion, heading rate, curvature and
+   normalized relative path shape from future images without reading the WAM's
+   candidate trajectories. Forward/backward consistency, dynamic suppression,
+   observability and abstention are part of the measurement contract.
+2. **Capability-stratified metrics.** CFAC, CCFC, FAU and FCS are reported as
+   separate evidence columns with per-column coverage. Unsupported capabilities
+   are `unavailable`, not zero-filled.
+3. **Fail-closed reproducibility.** Exact timestamps, calibration, model
+   revision, seed and lineage are required. Private GT is joined only on the
+   evaluation server; submitted motion profiles cannot replace image probing.
+
+The release does **not** claim a new optical-flow architecture. The novelty is
+the leakage-resistant measurement and scoring protocol built around a frozen,
+audited flow component.
+
+## Three-step protocol
 
 ```mermaid
 flowchart LR
-    I["输入<br/>4 帧历史图像 + 自车状态<br/>WAM：原生未来轴（≥4 点，覆盖 4 秒）<br/>相机标定"] --> A
-    subgraph S1["STEP 1 · 图像侧测量"]
-        A["RAFT-Large + 前后向一致性<br/>动态抑制 + 地面平面自车几何"]
-        O["输出 m_F(t)<br/>横向运动 · yaw · 曲率<br/>可观测性 / coverage-risk"]
-        B["依据<br/>logged 自车状态 + history/shuffle/reversal 三门"]
-        A --> O
-        B -.-> O
-    end
-    O --> D
-    subgraph S2["STEP 2 · 反事实一致性 CCFC（主榜可选列）"]
-        D["成对可重复干预：left/right、slow/fast、command 或 latent swap<br/>固定历史 + 随机种子"]
-        C["比较 Δ 想象运动 ↔ Δ 原生动作"]
-        Q["输出 CCFC<br/>方向 · 幅度 · 时间对齐 · 覆盖率"]
-        E["依据<br/>候选盲解码 + 原生 lineage<br/>identity/time-order 对照"]
-        D --> C --> Q
-        E -.-> Q
-    end
-    Q --> R
-    subgraph S3["STEP 3 · 前瞻条件成功 FCS"]
-        R["独立模拟器闭环<br/>每条分支分别执行"]
-        T["输出实际自车状态<br/>task score / task success → FCS"]
-        U["依据<br/>状态必须来自模拟器<br/>waypoint 不能充当实际状态"]
-        R --> T
-        U -.-> T
-    end
+  I["History + WAM future visual state + calibration"] --> S1
+  subgraph S1["Step 1 · Visual motion measurement"]
+    S1a["RAFT-Large F/B flow"] --> S1b["Ground-plane geometry + dynamic suppression"]
+    S1b --> S1c["Candidate-blind decoder + observability"]
+    S1c --> S1d["lateral · yaw · curvature · relative shape"]
+  end
+  S1d --> S2
+  subgraph S2["Step 2 · CCFC"]
+    S2a["Two fixed-condition forwards"] --> S2b["Δ imagined motion ↔ Δ native action"]
+  end
+  S2 --> S3
+  subgraph S3["Step 3 · FCS"]
+    S3a["Native action → independent NAVSIM/PDM rollout"] --> S3b["Realized state + task success"]
+  end
 ```
 
-Editable diagram source: [`docs/IAC_FROZEN_PIPELINE_V1.mmd`](docs/IAC_FROZEN_PIPELINE_V1.mmd).
+### Step 1: visual motion measurement
 
-The levels are cumulative but answer different questions:
-
-| Step | Design intent | Evidence boundary |
-|---|---|---|
-| **Step 1** | Establish a trustworthy, candidate-blind ruler for future motion | Image-derived motion agrees with an independent logged reference; this validates measurement, not WAM causality |
-| **Step 2 / CCFC** | Test whether an intervention changes imagined motion and native action in the corresponding way | Compare `Δ imagined motion` with `Δ native action` under fixed history/seed; this is a main leaderboard column when available |
-| **Step 3 / FCS** | Test whether that consistency survives execution in the environment | Add an independent rollout, realized state and explicit task-success label; this is the causal-closure layer |
-
-### What Step 1 contains
-
-For each 4-second window, the frozen benchmark uses 4 history and 8 reference future
-frames; submitted WAM outputs retain their native future axis (at least 4 points):
+The frozen v3 coordinate contract is decoder images at `448×256`, with RAFT
+inference at `512×288` and flow mapped back to decoder coordinates. The default
+configuration is [`configs/plane.json`](configs/plane.json). The formal motion
+fields are:
 
 ```text
-RAFT-Large forward/backward flow
-  → consistency checks and dynamic suppression
+future RGB (or a fixed, checksummed latent decoder)
+  → RAFT-Large forward/backward flow
+  → consistency and dynamic masks
   → calibrated ground-plane ego geometry
-  → camera intrinsics/extrinsics and distortion
   → candidate-blind continuous decoder
-  → observability gate and abstention
-  → lateral motion, yaw rate and curvature posterior
-  → final comparison with action-waypoint kinematics
+  → observability / abstention
+  → lateral motion, yaw rate, curvature and relative arc shape
 ```
 
-The action or waypoint is withheld from the image decoder and is read only at
-the final comparison stage. Absolute speed, acceleration and metric forward
-distance remain diagnostic in v1; the formal ruler is lateral motion, yaw rate,
-curvature, observability and coverage-risk.
+Metric forward distance, absolute speed and acceleration are diagnostic only in
+this release because their monocular scale error exceeds the frozen error
+budget. Stop samples are reported by the stop layer and excluded from moving
+motion averages.
 
-### What CCFC means
+### Step 2: CFAC and CCFC
 
-**CCFC (Continuous Counterfactual Foresight Consistency)** measures whether a
-reproducible intervention changes a WAM's imagined future and native action in
-the same direction and with compatible timing. With the same history, prompt,
-seed and nuisance settings, run two forwards with any supported intervention,
-such as left/right, slow/fast, command change or latent swap:
+**CFAC** compares one run's imagined motion profile `P_F` with its native action
+profile `P_A`. **CCFC** compares the changes produced by two reproducible
+forwards with the same history, seed and nuisance variables:
 
 ```text
-ΔP_F(t) = P_F,branch1(t) − P_F,branch0(t)
-ΔP_A(t) = P_A,branch1(t) − P_A,branch0(t)
-CCFC    = consistency(ΔP_F, ΔP_A)
+ΔP_F = P_F(branch 1) − P_F(branch 0)
+ΔP_A = P_A(branch 1) − P_A(branch 0)
+CCFC = consistency(ΔP_F, ΔP_A)
 ```
 
-The report includes direction, magnitude, temporal alignment and coverage.
-Wrong-identity and time-reversal controls test whether the response depends on
-future content and its order rather than on a cache-presence artefact. Semantic
-clear/risk is useful but is not a hard requirement.
+Any auditable intervention is allowed (for example left/right, slow/fast,
+command change or latent swap). Semantic clear/risk is optional. The evaluator
+must receive both regenerated future visual output and native action; injecting
+an action after generation is only an action-response diagnostic, not CCFC.
 
-### What FCS means
+FAU reports whether imagined motion (`FAU_F`) and native action (`FAU_A`) each
+approach the private ground-truth future; `FAU = sqrt(FAU_F × FAU_A)`.
 
-**FCS (Foresight-Conditioned Success)** is a downstream execution metric. It
-feeds the WAM's submitted native action into an independent NAVSIM/PDM rollout
-and measures the realized task outcome; the rollout does **not** read the WAM's
-generated future images:
+### Step 3: FCS
+
+FCS sends native action to an independent simulator and scores the realized
+state and task label. The rollout never reads generated future images, and a
+WAM waypoint is never treated as realized state. Without a compatible rollout
+or task label, FCS is `unavailable`.
+
+## v3 benchmark
+
+The frozen main split is [`datasets/benchmark_v3_public.jsonl`](datasets/benchmark_v3_public.jsonl):
+
+| Property | Frozen value |
+|---|---:|
+| Samples | 1,000 NAVSIM windows |
+| History | 4 frames, `t ≤ 0` |
+| Future reference axis | 8 frames, `0.5 … 4.0 s` |
+| Straight cruise | 300 (30% hard cap) |
+| Lateral turn | 503 |
+| Acceleration | 82 |
+| Braking | 65 |
+| Stop | 50 (5% cap) |
+| Scene groups | 675 |
+| In-scene window separation | ≥12 frames |
+
+Selection and leakage audits are in
+[`docs/BENCHMARK_V3_PROTOCOL_AUDIT_20260904_ZH.md`](docs/BENCHMARK_V3_PROTOCOL_AUDIT_20260904_ZH.md).
+The historical 580-record NAVSIM+Waymo pool is retained only as a pilot.
+
+## Reference DriveWAM run
+
+The first complete v3 pilot used DriveWAM with the native LingBot-VA base. These
+values are an example of the protocol, not an oracle or a claim that every WAM
+must expose every column:
+
+| Column | Score | Validity |
+|---|---:|---|
+| CFAC (shape composite) | 0.7638 | 823/1,000 |
+| CCFC (arc-relative command intervention) | 0.2178 | 453/1,000 pairs |
+| FAU_F | 0.5449 | 823/1,000 |
+| FAU_A | 0.4904 | 823/1,000 |
+| FAU | 0.5169 | 823/1,000 |
+| FCS | 0.5143 | 503 successes / 978 executable rows |
+
+Full provenance and per-sample artifacts are documented in
+[`docs/DRIVEWAM_BENCHMARK_V3_RESULTS_20260905_ZH.md`](docs/DRIVEWAM_BENCHMARK_V3_RESULTS_20260905_ZH.md).
+
+## Repository layout
 
 ```text
-imagined future → native action → independent simulator
-                                  → realized state → task success
+configs/       frozen evaluator configuration (`plane.json`)
+datasets/      public v3 manifest, split audit and scorecard schema
+docs/          protocol, dataset, metric and reproducibility specifications
+scripts/       submission audit, manifest builders and evaluation entrypoints
+src/iac_new/   reusable flow, geometry, decoder and scoring library
+tests/         deterministic unit and protocol tests
+weights/       frozen RAFT-Large checkpoint, provenance and SHA-256
 ```
 
-The realized state must come from the simulator, never from the WAM waypoint.
-Missing task labels or an incompatible simulator are `unavailable`, never zero.
-FCS therefore must not be interpreted by itself as proof that the action was
-caused by the imagined future; CFAC/CCFC provide the visual-action evidence.
-
-## Main leaderboard columns
-
-The public scoreboard is capability-stratified. It does not average unavailable
-capabilities into zero or force every WAM to expose the same intervention API:
-
-| Column | Evidence | If unsupported |
-|---|---|---|
-| **CFAC** | single-run imagined motion vs native action | `unavailable` |
-| **CCFC** | paired intervention: `ΔP_F` vs `ΔP_A` | `unavailable` |
-| **FAU_F / FAU_A / FAU** | both imagined motion and action compared with private GT; `FAU=sqrt(FAU_F×FAU_A)` | `unavailable` |
-| **FCS** | independent simulator rollout and task label | `unavailable` |
-| **Coverage** | valid samples for each column | always reported |
-
-CCFC is a formal main metric, but optional. `missing` means a claimed capability
-has incomplete evidence; `ineligible` is reserved for a hard protocol violation.
-
-## Release contents
-
-```text
-.
-├── configs/         frozen RAFT-Large ground-plane configuration
-├── datasets/        public, path-sanitised benchmark/dev manifests and audits
-├── docs/            frozen benchmark protocol and Step 1 main table
-├── scripts/         dataset builders, audits and scorers
-├── src/iac_new/     reusable Step 1 geometry, flow and scoring library
-├── tests/           deterministic unit and protocol tests
-├── weights/         frozen RAFT-Large checkpoint + checksum
-├── pyproject.toml
-├── VERSION
-├── README.md
-└── README_zh.md
-```
-
-The role of each directory is fixed as follows:
-
-| Path | Role | Required for reproduction |
-|---|---|---|
-| `configs/` | Frozen image-side geometry configuration (`plane.json`) | Yes |
-| `datasets/` | Leakage-safe public manifests and split audits | Yes (metadata) |
-| `docs/` | Frozen protocol, dataset contract and main-table definitions | Yes (protocol) |
-| `scripts/` | Manifest builders, WAM-output audits and Step 1 scorers | Yes |
-| `src/iac_new/` | Reusable flow, geometry, posterior and scoring implementation | Yes |
-| `tests/` | Deterministic unit and protocol checks | Recommended |
-| `weights/` | Frozen RAFT-Large checkpoint, provenance and SHA-256 checksums | Yes for the default probe |
-| `pyproject.toml`, `VERSION` | Python package metadata and release identity | Yes |
-
-The package intentionally contains no raw camera frames, private paths, WAM
-checkpoints or generated experiment logs. Those inputs are mounted through the
-private manifest interface at evaluation time.
-
-Raw NAVSIM/Waymo frames, private absolute paths, WAM checkpoints and generated
-logs are deliberately excluded. They stay in the data storage area and are
-referenced through the manifest interface, which prevents accidental leakage
-and keeps the GitHub package portable.
-
-## Frozen protocol
-
-The current main board is `benchmark-v3`: 1,000 NAVSIM windows, straight-cruise
- capped at 30%, stop capped at 5%, and 65% combined lateral-turn/acceleration/
-braking cases. It has 675 scene groups and a minimum 12-frame separation between
-windows in one scene. See
-[`docs/BENCHMARK_V3_PROTOCOL_AUDIT_20260904_ZH.md`](docs/BENCHMARK_V3_PROTOCOL_AUDIT_20260904_ZH.md)
-for quotas, cache audit and the 978/1000 Step-3 execution boundary. Waymo is
-external generalization only.
-
-- The frozen benchmark reference contains four history frames (`t <= 0`) and
-  eight future frames at `0.5, …, 4.0 s`. A WAM submission may retain its native
-  future axis as long as it has at least four points covering 4.0 s (DriveWAM's
-  four-point, 1 Hz axis is valid). The public manifests do **not** contain
-  future images; they contain only protocol metadata and sanitised identity.
-- Exact timestamps, camera intrinsics/extrinsics and distortion are required.
-- Scene/log groups are disjoint between benchmark and dev; split construction
-  is deterministic and audited.
-- The former 580-record v1 pool (500 NAVSIM + 80 Waymo) is a historical pilot;
-  the current main denominator is the 1,000-record all-NAVSIM v3 pool.
-- Strata include stop, braking, acceleration, lateral-turn and straight-cruise
-  so performance is not dominated by straight driving.
-
-The public JSONL manifests retain sample identity, split, stratum, timestamps,
-calibration and history state, while omitting raw image paths and future ground
-truth. Use the private data root configured by your local environment to attach
-frames at run time.
+Raw data, private GT, generated videos, WAM weights and server paths are
+intentionally excluded.
 
 ## Install and verify
 
 ```bash
 python -m pip install -e .
-PYTHONPATH=src:. python -m pytest tests -q
+PYTHONPATH=src:. python -m pytest -q
 sha256sum -c weights/SHA256SUMS.txt
 ```
 
-The test suite is deterministic and covers calibration interfaces, temporal
-geometry, flow reliability, trajectory decoding, split isolation and the
-Step 1 continuous scorer.
+## Submit and score a WAM
 
-## Run Step 1 measurement
-
-On the evaluation server, first run the frozen image decoder on WAM-generated
-future-image records with `configs/plane.json`, producing a decoder-score JSONL.
-The public manifests alone cannot be scored because their future images and
-future reference states remain private. Action/trajectory fields are read only
-at the final comparison stage and must not be passed to the image-side decoder.
-
-```bash
-python scripts/audit_wam_level1_outputs.py --generated <wam_generated_records.jsonl> \
-  --output <wam_output_audit.json>
-python scripts/evaluate_continuous_decoder.py \
-  --manifest <private_wam_generated_records.jsonl> \
-  --config configs/plane.json \
-  --output <decoder_scores.jsonl>
-python scripts/evaluate_continuous_motion_alignment.py \
-  --manifest <private_evaluation_manifest.jsonl> \
-  --scores <decoder_scores.jsonl> \
-  --reference-source action \
-  --output <out_dir>
-```
-
-The report contains path-normalised lateral/heading/curvature errors,
-candidate-blind observability and coverage-risk. Speed is diagnostic only in
-v1; it is not a formal Step 1 score. CCFC accepts any reproducible paired
-intervention (for example left/right, slow/fast, command changes or latent
-swap) and reports the intervention type. FCS additionally requires an
-independent rollout and an explicit task-success label. Semantic clear/risk is
-valuable but optional. Unsupported optional cells are `unavailable`; only hard
-protocol violations are `ineligible`.
-
-## Submit a WAM
-
-Authors submit JSONL against `datasets/benchmark_v1_public.jsonl`. The schema,
-legacy capability fields and scorecard rules are in
-`docs/WAM_SUBMISSION_V1_ZH.md`; the current visual-action admission protocol is
-in `docs/WAM_SCOPE_AND_UNIFIED_PROTOCOL_V1_ZH.md`. Validate locally with:
+Each row must match a public `sample_id` and contain native action, future RGB
+(or decoder-reconstructable latent), exact future timestamps, calibration, seed,
+model revision and lineage. At least four future points must cover approximately
+four seconds; the native axis is preserved (DriveWAM's four points at 1 Hz is
+valid). Future images and private GT are never included in the public manifest.
 
 ```bash
 python scripts/validate_wam_submission.py \
-  --public datasets/benchmark_v1_public.jsonl \
+  --public datasets/benchmark_v3_public.jsonl \
   --submission <submission.jsonl> \
   --output <audit.json>
-python scripts/score_iac_submission.py --frozen-pilots --output scorecard.json
+
+python scripts/score_iac_submission.py \
+  --public datasets/benchmark_v3_public.jsonl \
+  --submission <submission.jsonl> \
+  --measurements <server_measurements.json> \
+  --output <scorecard.json>
 ```
 
-The official v1 board (`datasets/scorecard_v1.json`) records WorldDrive,
-DriveWAM, Epona and DriveVA as capability-stratified pilots. CCFC/FAU/FCS cells
-are populated only when the required evidence exists; otherwise they are
-`unavailable`, never fabricated as zero.
-DriveWAM shape CFAC pilot is **0.7610 (564/580, interval coverage 0.6981)** on
-lateral/yaw/curvature only. Legacy CFAC 0.4825 used the same three fields with a
-dir×mag×temp geometric mean, not longitudinal speed. Full CCFC remains
-metric=0.1235 / arc_relative=0.2234 (357/580) until the default primary is
-switched. FAU 0.6509 already uses shape components vs private GT and is held as
-`missing` only until its aggregation is frozen to the new CFAC policy.
+The server-only Step 1 command consumes a private joined manifest and runs
+`scripts/evaluate_continuous_decoder.py` with `configs/plane.json`; the public
+manifest alone cannot access images or GT. Capability status is one of
+`pass`, `pilot`, `unavailable`, `missing` or `ineligible`.
 
-## Step 1 metric summary
+## License and data
 
-The following is the **new frozen `benchmark_v1` experiment**, evaluated on
-580 records (500 NAVSIM + 80 Waymo), with strict shape gating and shape
-fallback disabled. The reference is logged future ego state, so these numbers
-validate the image measurement layer; they are not WAM causal scores.
-
-| Metric | Result | Interpretation |
-|---|---:|---|
-| Non-stop shape coverage | **440/468 = 94.0%** | At least one shape interval is observable on most moving samples |
-| Stop recognition | **92/112 = 82.1%** | Stop is reported by the dedicated stop layer, not by a fake velocity estimate |
-| Lateral-speed MAE / within tolerance | **0.095 m/s / 98.4%** | Reliable lateral-motion amplitude (`0.50 m/s` tolerance) |
-| Yaw-rate MAE / within tolerance | **0.029 rad/s / 97.0%** | Reliable heading-change measurement (`0.15 rad/s` tolerance) |
-| Curvature MAE / within tolerance | **0.022 1/m / 86.1%** | Usable curvature measurement (`0.06 1/m` tolerance), with a heavier tail |
-| Turn-layer yaw increment | **Gate passed** (106/114 evaluable) | Future content improves over history, matched-shuffle and reversal controls |
-| Turn-layer curvature increment | **Gate passed** (106/114 evaluable) | Curvature uses the correct future and its temporal order |
-| Full-pool curvature increment | **Gate passed** | The curvature signal remains specific on the mixed benchmark pool |
-
-The formal Step 1 comparison therefore uses lateral motion, yaw rate and
-curvature. Absolute speed, acceleration and metric forward distance remain
-diagnostic only. The complete definitions, tolerances and bootstrap-gate
-wording are frozen in
-[`docs/LEVEL1_MAIN_TABLE_BENCHMARK_V1_ZH.md`](docs/LEVEL1_MAIN_TABLE_BENCHMARK_V1_ZH.md).
-
-### Reliability and long-tail diagnostics
-
-The 78-sample development audit is retained only to expose failure modes and
-coverage. It reports mean interval observability **77.2%**, fully observable
-sample rate **61.5%**, and overall core-pass rate **82.1%**. Strong turns are
-observable (interval coverage **100%**) but have only **40.0%** core-pass rate;
-the limitation is accumulated lateral error, not invisibility. On the
-scene-aware non-overlap 25-sample audit, core-pass rate is **88.0%** and
-interval coverage **58.5%**, but braking has only one sample. These diagnostics
-must not be merged into the frozen 580-record headline or used to claim
-causality.
-
-## Dataset preparation
-
-Use `scripts/build_level1_benchmark_v1.py` to construct deterministic splits
-from private NAVSIM/Waymo records. `scripts/prepare_waymo_level1_samples.py`
-converts Waymo Perception v2 shards to the 4+8-frame interface, and
-`scripts/build_public_benchmark_manifest.py` creates a leakage-safe public
-manifest. See `docs/BENCHMARK_DATASET_V1_ZH.md` for the data protocol and
-`docs/LEVEL1_MAIN_TABLE_BENCHMARK_V1_ZH.md` for the frozen main table.
-
-## Data and license
-
-This repository contains code, manifests and third-party optical-flow weights.
-NAVSIM and Waymo data remain subject to their original access terms and are
-not redistributed here. Check `weights/README.md` for checkpoint provenance and
-upstream licenses.
+Code is released under the repository license. The RAFT checkpoint remains
+subject to its upstream torchvision license (see [`weights/README.md`](weights/README.md)).
+NAVSIM and Waymo data are not redistributed; users must obtain them under their
+own terms.
